@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}Assistant — BarangayConnect{% endblock %}
+{% block page_title %}Resident Assistant{% endblock %}
+{% block content %}
+<div class="card" style="max-width:720px; display:flex; flex-direction:column; height:70vh;">
+  <div class="card-head">
+    <h3>🤖 Ask BarangayConnect</h3>
+    <span class="tag" style="{{ '' if api_enabled else 'background:#FDF1DC;color:#A16207;' }}">
+      {{ 'Claude-powered' if api_enabled else 'Offline assistant' }}
+    </span>
+  </div>
+  <p class="hint" style="margin-bottom:14px;">
+    Paste a reference number (e.g. REQ-2026-ABCDE) to check its status, or ask about document
+    requirements and how to file a complaint.
+  </p>
+
+  <div id="chat-log" style="flex:1; overflow-y:auto; padding-right:4px; margin-bottom:14px;">
+    {% for m in rows %}
+    <div class="chat-bubble {{ 'chat-user' if m.role=='user' else 'chat-bot' }}">{{ m.message }}</div>
+    {% endfor %}
+  </div>
+
+  {% if not rows %}
+  <div id="chat-suggestions" style="display:flex; flex-wrap:wrap; gap:8px; margin-bottom:14px;">
+    <button type="button" class="bc-chip-full">How do I get a Barangay Clearance?</button>
+    <button type="button" class="bc-chip-full">How do I file a complaint?</button>
+    <button type="button" class="bc-chip-full">Requirements for Certificate of Indigency?</button>
+    <button type="button" class="bc-chip-full">I forgot my password</button>
+  </div>
+  {% endif %}
+
+  <form id="chat-form" style="display:flex; gap:10px;">
+    <input type="text" id="chat-input" autocomplete="off" placeholder="Type your question..." style="flex:1;" required>
+    <button class="btn btn-primary" type="submit">Send</button>
+  </form>
+</div>
+
+<style>
+.chat-bubble { max-width: 75%; padding: 10px 15px; border-radius: 14px; margin-bottom: 10px; font-size: 14px; line-height: 1.5; }
+.chat-user { background: var(--navy); color: #fff; margin-left: auto; border-bottom-right-radius: 4px; }
+.chat-bot { background: #EEF2FA; color: var(--ink); margin-right: auto; border-bottom-left-radius: 4px; }
+.bc-chip-full {
+  border: 1.5px solid var(--cyan); color: var(--cyan-dark); background: #fff;
+  padding: 7px 14px; border-radius: 18px; font-size: 12.5px; font-weight: 600; cursor: pointer;
+}
+.bc-chip-full:hover { background: #EAFBFE; }
+</style>
+
+<script>
+const log = document.getElementById('chat-log');
+const form = document.getElementById('chat-form');
+const input = document.getElementById('chat-input');
+log.scrollTop = log.scrollHeight;
+
+function addBubble(text, who) {
+  const div = document.createElement('div');
+  div.className = 'chat-bubble ' + (who === 'user' ? 'chat-user' : 'chat-bot');
+  div.textContent = text;
+  log.appendChild(div);
+  log.scrollTop = log.scrollHeight;
+}
+
+form.addEventListener('submit', async (e) => {
+  e.preventDefault();
+  const msg = input.value.trim();
+  if (!msg) return;
+  await sendChatMessage(msg);
+});
+
+document.querySelectorAll('.bc-chip-full').forEach((btn) => {
+  btn.addEventListener('click', () => {
+    const box = document.getElementById('chat-suggestions');
+    if (box) box.remove();
+    sendChatMessage(btn.textContent);
+  });
+});
+
+async function sendChatMessage(msg) {
+  addBubble(msg, 'user');
+  input.value = '';
+  addBubble('...', 'bot-typing');
+  try {
+    const res = await fetch("{{ url_for('api_assistant_message') }}", {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ message: msg })
+    });
+    const data = await res.json();
+    log.removeChild(log.lastChild);
+    addBubble(data.reply || 'Sorry, something went wrong.', 'bot');
+  } catch (err) {
+    log.removeChild(log.lastChild);
+    addBubble('Connection error. Please try again.', 'bot');
+  }
+}
+</script>
+{% endblock %}

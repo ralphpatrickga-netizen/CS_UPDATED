@@ -1,0 +1,17 @@
+{% extends "base.html" %}
+{% block title %}{{ code }} — BarangayConnect{% endblock %}
+{% block page_title %}{{ code }}{% endblock %}
+{% block content %}
+<div class="card" style="text-align:center; padding:60px 20px;">
+  <h2 style="font-size:44px;">{{ code }}</h2>
+  <p class="muted">{{ message }}</p>
+  <a class="btn btn-primary" href="{{ url_for('index') }}" style="margin-top:10px;">Back to Dashboard</a>
+</div>
+{% endblock %}
+{% block auth_content %}
+<div class="auth-wrap"><div class="auth-card" style="text-align:center;">
+  <h1>{{ code }}</h1>
+  <p class="auth-sub">{{ message }}</p>
+  <a class="btn btn-primary btn-block" href="{{ url_for('login') }}">Go to Login</a>
+</div></div>
+{% endblock %}

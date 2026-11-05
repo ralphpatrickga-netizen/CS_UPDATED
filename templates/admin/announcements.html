@@ -1,0 +1,37 @@
+{% extends "base.html" %}
+{% block title %}Announcements — BarangayConnect{% endblock %}
+{% block page_title %}Announcements{% endblock %}
+{% block content %}
+<div class="card" style="max-width:640px;">
+  <h3>Post a New Announcement</h3>
+  <p class="muted">This will be sent as a notification to every active resident.</p>
+  <form method="POST" class="form-grid">
+    <div class="form-row">
+      <label>Title</label>
+      <input type="text" name="title" required placeholder="e.g. Barangay Hall closed on October 15">
+    </div>
+    <div class="form-row">
+      <label>Message</label>
+      <textarea name="message" required placeholder="Details residents should know"></textarea>
+    </div>
+    <button class="btn btn-primary" type="submit">Post Announcement</button>
+  </form>
+</div>
+
+<div class="card">
+  <h3>Announcement History</h3>
+  {% if rows %}
+  <div class="table-wrap"><table>
+    <tr><th>Date</th><th>Title</th><th>Message</th><th>Posted by</th></tr>
+    {% for a in rows %}
+    <tr>
+      <td class="muted">{{ a.created_at }}</td>
+      <td><strong>{{ a.title }}</strong></td>
+      <td>{{ a.message }}</td>
+      <td class="muted">{{ a.posted_by_name or '—' }}</td>
+    </tr>
+    {% endfor %}
+  </table></div>
+  {% else %}<div class="empty-state">No announcements posted yet.</div>{% endif %}
+</div>
+{% endblock %}

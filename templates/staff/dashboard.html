@@ -1,0 +1,130 @@
+{% extends "base.html" %}
+{% block title %}Staff Dashboard — BarangayConnect{% endblock %}
+{% block page_title %}Staff Dashboard{% endblock %}
+{% block content %}
+<section class="dashboard-shell staff-dashboard" aria-label="Staff dashboard overview">
+  <div class="dashboard-shell-intro">
+    <div>
+      <p class="dashboard-eyebrow">BarangayConnect workspace</p>
+      <p class="dashboard-subtitle">Your service queues and latest office activity at a glance.</p>
+    </div>
+    {% if office_label and not (office_label == 'Barangay Treasurer' and 'Barangay Clearance' in handled_types) %}
+    <div class="staff-office-label"><span aria-hidden="true">⌖</span>Office: <strong>{{ office_label }}</strong>{% if handled_types %} — handles {{ handled_types|join(', ') }}{% elif can_complaints %} — handles complaints{% endif %}</div>
+    {% endif %}
+  </div>
+
+  {% if not office_label %}
+  <div class="dashboard-notice dashboard-notice-warning">
+    <div><span class="dashboard-notice-icon" aria-hidden="true">!</span><strong>No office assigned yet. Please ask the Administrator to assign your account to an office. Until then you cannot open requests or complaints.</strong></div>
+  </div>
+  {% endif %}
+  {% if can_complaints and urgent_complaints %}
+  <div class="dashboard-notice dashboard-notice-urgent">
+    <div><span class="dashboard-notice-icon" aria-hidden="true">!</span><strong>{{ urgent_complaints }} high-priority complaint{{ 's' if urgent_complaints != 1 }} need{{ '' if urgent_complaints != 1 else 's' }} attention.</strong></div>
+    <a class="btn btn-warning btn-sm" href="{{ url_for('staff_complaints', priority='High') }}">Review Now</a>
+  </div>
+  {% endif %}
+
+  <div class="stat-grid">
+    {% if can_requests %}
+    <a class="stat-card accent-cyan" href="{{ url_for('staff_requests') }}">
+      <div class="stat-card-top"><span class="stat-icon" aria-hidden="true">◷</span><span class="stat-status"><i class="status-dot status-cyan"></i> Today</span></div>
+      <div class="num">{{ todays_requests }}</div><div class="label">Today's Requests</div>
+    </a>
+    <a class="stat-card accent-amber" href="{{ url_for('staff_requests') }}">
+      <div class="stat-card-top"><span class="stat-icon" aria-hidden="true">▤</span><span class="stat-status"><i class="status-dot status-amber"></i> Needs review</span></div>
+      <div class="num">{{ pending_approvals }}</div><div class="label">Pending Approvals</div>
+    </a>
+    {% endif %}
+    {% if can_complaints %}
+    <a class="stat-card accent-red" href="{{ url_for('staff_complaints', priority='High') }}">
+      <div class="stat-card-top"><span class="stat-icon" aria-hidden="true">⚑</span><span class="stat-status"><i class="status-dot status-red"></i> Priority</span></div>
+      <div class="num">{{ urgent_complaints }}</div><div class="label">High Priority Concerns</div>
+    </a>
+    {% endif %}
+    <a class="stat-card accent-green" href="{{ url_for('notifications') }}">
+      <div class="stat-card-top"><span class="stat-icon" aria-hidden="true">♧</span><span class="stat-status"><i class="status-dot status-green"></i> Updates</span></div>
+      <div class="num">{{ unread_count }}</div><div class="label">Unread Notifications</div>
+    </a>
+  </div>
+
+  {% if can_complaints and related_clusters %}
+  <section class="card dashboard-clusters">
+    <div class="card-head">
+      <div><h3>Related Concerns</h3><p class="dashboard-card-subtitle">Similar reports grouped by category and location</p></div>
+      <a class="btn btn-outline btn-sm" href="{{ url_for('staff_complaints') }}">All Concerns</a>
+    </div>
+    <div class="complaint-card-grid">
+      {% for cluster in related_clusters %}
+      <article class="complaint-card">
+        <div class="complaint-card-icon" aria-hidden="true">⚑</div>
+        <div class="complaint-card-content">
+          <h4>{{ cluster.category }}</h4>
+          <p class="complaint-card-location">{{ cluster.location }}</p>
+          <div class="complaint-card-meta">
+            <span><strong>{{ cluster.complaint_count }}</strong> complaint{{ 's' if cluster.complaint_count != 1 }}</span>
+            <span>{{ cluster.distinct_residents }} resident{{ 's' if cluster.distinct_residents != 1 }}</span>
+          </div>
+        </div>
+        <a class="complaint-card-link" href="{{ url_for('staff_complaints') }}?status=Pending" aria-label="Review {{ cluster.category }} concerns">Review <span aria-hidden="true">→</span></a>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  {% if can_complaints and total_complaints %}
+  <section class="card dashboard-statistics">
+    <div class="card-head"><div><h3>Concern Statistics</h3><p class="dashboard-card-subtitle">Status breakdown</p></div><span class="dashboard-total">{{ total_complaints }} total</span></div>
+    {% for s in complaint_stats %}
+    <div class="bar-chart-row">
+      <div class="bar-chart-label">{{ s.status }}</div>
+      <div class="bar-chart-track"><div class="bar-chart-fill" style="width:{{ s.pct }}%; background:{{ s.color }};"></div></div>
+      <div class="bar-chart-count">{{ s.count }}</div>
+    </div>
+    {% endfor %}
+  </section>
+  {% endif %}
+
+  <div class="dashboard-queue-grid">
+    {% if can_requests %}
+    <section class="card dashboard-activity">
+      <div class="card-head"><div><h3>Request Queue</h3><p class="dashboard-card-subtitle">Requests awaiting your action</p></div><a class="btn btn-outline btn-sm" href="{{ url_for('staff_requests') }}">View All</a></div>
+      {% if queue %}
+      <div class="table-wrap"><table>
+        <thead><tr><th>Reference</th><th>Type</th><th>Status</th></tr></thead>
+        <tbody>
+        {% for r in queue %}
+        <tr onclick="window.location='{{ url_for('view_request', request_id=r.id) }}'" style="cursor:pointer;">
+          <td class="ref-code">{{ r.reference_no }}</td><td>{{ r.request_type }}</td>
+          <td><span class="badge badge-{{ r.status.replace(' ','.') }}">{{ r.status }}</span></td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table></div>
+      {% else %}<div class="empty-state">Queue is clear.</div>{% endif %}
+    </section>
+    {% endif %}
+
+    {% if can_complaints %}
+    <section class="card dashboard-activity">
+      <div class="card-head"><div><h3>Concern Queue</h3><p class="dashboard-card-subtitle">High-priority reports appear first</p></div><a class="btn btn-outline btn-sm" href="{{ url_for('staff_complaints') }}">View All</a></div>
+      {% if my_complaint_queue %}
+      <div class="table-wrap"><table>
+        <thead><tr><th>Priority</th><th>Reference</th><th>Category</th><th>Status</th></tr></thead>
+        <tbody>
+        {% for c in my_complaint_queue %}
+        <tr class="priority-row-{{ c.priority }}" onclick="window.location='{{ url_for('view_complaint', complaint_id=c.id) }}'" style="cursor:pointer;">
+          <td><span class="badge priority-{{ c.priority }}"><span class="dot-indicator dot-{{ c.priority|lower }}"></span> {{ c.priority }}</span></td>
+          <td class="ref-code">{{ c.reference_no }}</td><td>{{ c.category }}</td>
+          <td><span class="badge badge-{{ c.status.replace(' ','.') }}">{{ c.status }}</span></td>
+        </tr>
+        {% endfor %}
+        </tbody>
+      </table></div>
+      {% else %}<div class="empty-state">Queue is clear.</div>{% endif %}
+    </section>
+    {% endif %}
+  </div>
+</section>
+{% endblock %}

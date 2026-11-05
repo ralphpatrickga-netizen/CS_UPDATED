@@ -1,0 +1,22 @@
+{% extends "base.html" %}
+{% block title %}Audit Logs — BarangayConnect{% endblock %}
+{% block page_title %}Audit Logs{% endblock %}
+{% block content %}
+<div class="card">
+  <p class="muted">Append-only record of account provisioning and status changes across the system. Showing the latest 300 entries.</p>
+  {% if rows %}
+  <div class="table-wrap"><table>
+    <tr><th>Date</th><th>Actor</th><th>Action</th><th>Target</th><th>Details</th></tr>
+    {% for a in rows %}
+    <tr>
+      <td class="muted">{{ a.created_at }}</td>
+      <td>{{ a.actor_name or 'System' }}</td>
+      <td>{{ a.action }}</td>
+      <td>{{ a.target or '—' }}</td>
+      <td class="muted">{{ a.details or '' }}</td>
+    </tr>
+    {% endfor %}
+  </table></div>
+  {% else %}<div class="empty-state">No audit entries yet.</div>{% endif %}
+</div>
+{% endblock %}

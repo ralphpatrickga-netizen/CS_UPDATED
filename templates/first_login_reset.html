@@ -1,0 +1,26 @@
+{% extends "base.html" %}
+{% block title %}Set Your Password — BarangayConnect{% endblock %}
+{% block auth_content %}
+<div class="auth-wrap">
+  <div class="auth-card">
+    <div class="auth-logo">
+      <span class="brand-mark">BC</span>
+      <div><strong style="font-family:var(--font-display); color:var(--navy)">BarangayConnect</strong></div>
+    </div>
+    <h1>Set a permanent password</h1>
+    <p class="auth-sub">This is your first login. Replace the initial password configured for your account.</p>
+    <form method="POST" class="form-grid">
+      <div class="form-row">
+        <label>New password</label>
+        <input type="password" name="password" required>
+        <span class="hint">Min. 8 characters, with a letter and a number.</span>
+      </div>
+      <div class="form-row">
+        <label>Confirm new password</label>
+        <input type="password" name="confirm_password" required>
+      </div>
+      <button class="btn btn-primary btn-block" type="submit">Set Password &amp; Continue</button>
+    </form>
+  </div>
+</div>
+{% endblock %}

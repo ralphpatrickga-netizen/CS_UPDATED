@@ -1,0 +1,151 @@
+{% extends "base.html" %}
+{% block title %}Admin Dashboard — BarangayConnect{% endblock %}
+{% block page_title %}Admin Dashboard{% endblock %}
+{% block content %}
+<section class="dashboard-shell admin-dashboard" aria-label="Admin dashboard overview">
+  <div class="dashboard-shell-intro">
+    <div>
+      <p class="dashboard-eyebrow">BarangayConnect overview</p>
+      <p class="dashboard-subtitle">Monitor resident services, team activity, and community concerns.</p>
+    </div>
+    <div class="dashboard-actions">
+      <a class="btn btn-outline btn-sm" href="{{ url_for('admin_requests') }}">View Requests</a>
+      <a class="btn btn-primary btn-sm" href="{{ url_for('admin_complaints') }}">View Concerns</a>
+    </div>
+  </div>
+
+  {% if uncovered_offices %}
+  <div class="dashboard-notice dashboard-notice-warning">
+    <div><span class="dashboard-notice-icon" aria-hidden="true">!</span><strong>No active staff for: {{ uncovered_offices|join(', ') }}. Requests or complaints for {{ 'this office' if uncovered_offices|length == 1 else 'these offices' }} will not be processed.</strong></div>
+    <a class="btn btn-outline btn-sm" href="{{ url_for('admin_staff') }}">Manage Staff</a>
+  </div>
+  {% endif %}
+  {% if urgent_complaints %}
+  <div class="dashboard-notice dashboard-notice-urgent">
+    <div><span class="dashboard-notice-icon" aria-hidden="true">!</span><strong>{{ urgent_complaints }} high-priority complaint{{ 's' if urgent_complaints != 1 }} need{{ '' if urgent_complaints != 1 else 's' }} attention.</strong></div>
+    <a class="btn btn-warning btn-sm" href="{{ url_for('admin_complaints', priority='High') }}">Review Now</a>
+  </div>
+  {% endif %}
+
+  <div class="stat-grid">
+    <a class="stat-card accent-cyan" href="{{ url_for('admin_residents') }}">
+      <div class="stat-card-top"><span class="stat-icon" aria-hidden="true">♙</span><span class="stat-status"><i class="status-dot status-cyan"></i> Community</span></div>
+      <div class="num">{{ total_residents }}</div><div class="label">Total Residents</div>
+    </a>
+    <a class="stat-card accent-green" href="{{ url_for('admin_staff') }}">
+      <div class="stat-card-top"><span class="stat-icon" aria-hidden="true">♧</span><span class="stat-status"><i class="status-dot status-green"></i> Active</span></div>
+      <div class="num">{{ active_staff }}</div><div class="label">Active Staff</div>
+    </a>
+    <a class="stat-card accent-amber" href="{{ url_for('admin_requests') }}">
+      <div class="stat-card-top"><span class="stat-icon" aria-hidden="true">▤</span><span class="stat-status"><i class="status-dot status-amber"></i> Open items</span></div>
+      <div class="num">{{ pending_requests }}</div><div class="label">Pending Requests</div>
+    </a>
+    <a class="stat-card accent-red" href="{{ url_for('admin_complaints') }}">
+      <div class="stat-card-top"><span class="stat-icon" aria-hidden="true">⚑</span><span class="stat-status"><i class="status-dot status-red"></i> In progress</span></div>
+      <div class="num">{{ open_complaints }}</div><div class="label">Open Concerns</div>
+    </a>
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <div><h3>Service Activity</h3><p class="dashboard-card-subtitle">Requests and concerns over the last 8 weeks</p></div>
+      <div class="tag-list">
+        <span class="tag"><span class="dot-indicator" style="background:var(--cyan-dark);"></span> Requests</span>
+        <span class="tag"><span class="dot-indicator dot-high"></span> Complaints</span>
+      </div>
+    </div>
+    <svg viewBox="0 0 {{ trend.chart_w }} {{ trend.chart_h }}" style="width:100%; height:auto;" role="img" aria-label="Eight-week trend for requests and complaints">
+      {% for i in range(5) %}
+      {% set gy = trend.pad_t + trend.plot_h - (i * trend.plot_h / 4) %}
+      <line x1="{{ trend.pad_l }}" y1="{{ gy }}" x2="{{ trend.chart_w - 10 }}" y2="{{ gy }}" stroke="#EEF1F6" stroke-width="1"/>
+      {% endfor %}
+      <polyline points="{{ trend.request_points }}" fill="none" stroke="#0891A8" stroke-width="2.5"/>
+      <polyline points="{{ trend.complaint_points }}" fill="none" stroke="#E5484D" stroke-width="2.5"/>
+      {% for b in trend.buckets %}
+        {% set x = trend.pad_l + loop.index0 * trend.step_x %}
+        {% set ry = trend.pad_t + trend.plot_h - (b.requests / trend.max_val * trend.plot_h) %}
+        {% set cy = trend.pad_t + trend.plot_h - (b.complaints / trend.max_val * trend.plot_h) %}
+        <circle cx="{{ x }}" cy="{{ ry }}" r="3.5" fill="#0891A8"/>
+        <circle cx="{{ x }}" cy="{{ cy }}" r="3.5" fill="#E5484D"/>
+        <text x="{{ x }}" y="{{ trend.chart_h - 4 }}" font-size="10" fill="#64748B" text-anchor="middle">{{ b.label }}</text>
+      {% endfor %}
+    </svg>
+  </div>
+
+  {% if related_clusters %}
+  <section class="card dashboard-clusters">
+    <div class="card-head">
+      <div><h3>Related Concerns</h3><p class="dashboard-card-subtitle">Similar reports grouped by category and location</p></div>
+      <a class="btn btn-outline btn-sm" href="{{ url_for('admin_complaints') }}">All Concerns</a>
+    </div>
+    <div class="complaint-card-grid">
+      {% for cluster in related_clusters %}
+      <article class="complaint-card">
+        <div class="complaint-card-icon" aria-hidden="true">⚑</div>
+        <div class="complaint-card-content">
+          <h4>{{ cluster.category }}</h4>
+          <p class="complaint-card-location">{{ cluster.location }}</p>
+          <div class="complaint-card-meta">
+            <span><strong>{{ cluster.complaint_count }}</strong> complaint{{ 's' if cluster.complaint_count != 1 }}</span>
+            <span>{{ cluster.distinct_residents }} resident{{ 's' if cluster.distinct_residents != 1 }}</span>
+          </div>
+        </div>
+        <a class="complaint-card-link" href="{{ url_for('admin_complaints') }}?status=Pending" aria-label="Review {{ cluster.category }} concerns">Review <span aria-hidden="true">→</span></a>
+      </article>
+      {% endfor %}
+    </div>
+  </section>
+  {% endif %}
+
+  <div class="two-col">
+    {% if total_requests %}
+    <div class="card dashboard-statistics">
+      <div class="card-head"><div><h3>Request Statistics</h3><p class="dashboard-card-subtitle">Status breakdown</p></div><span class="dashboard-total">{{ total_requests }} total</span></div>
+      {% for s in request_stats %}
+      <div class="bar-chart-row">
+        <div class="bar-chart-label">{{ s.status }}</div>
+        <div class="bar-chart-track"><div class="bar-chart-fill" style="width:{{ s.pct }}%; background:{{ s.color }};"></div></div>
+        <div class="bar-chart-count">{{ s.count }}</div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+    {% if total_complaints %}
+    <div class="card dashboard-statistics">
+      <div class="card-head"><div><h3>Concern Statistics</h3><p class="dashboard-card-subtitle">Status breakdown</p></div><span class="dashboard-total">{{ total_complaints }} total</span></div>
+      {% for s in complaint_stats %}
+      <div class="bar-chart-row">
+        <div class="bar-chart-label">{{ s.status }}</div>
+        <div class="bar-chart-track"><div class="bar-chart-fill" style="width:{{ s.pct }}%; background:{{ s.color }};"></div></div>
+        <div class="bar-chart-count">{{ s.count }}</div>
+      </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+
+  <section class="card dashboard-activity">
+    <div class="card-head"><div><h3>Recent Activity</h3><p class="dashboard-card-subtitle">Latest resident requests and concerns</p></div><a class="btn btn-outline btn-sm" href="{{ url_for('audit_logs') }}">Full Audit Log</a></div>
+    {% if recent %}
+    <div class="table-wrap"><table>
+      <thead><tr><th></th><th>Date</th><th>Activity</th><th>Status</th></tr></thead>
+      <tbody>
+      {% for row in recent %}
+      <tr>
+        <td>{% if row.priority == 'High' %}<span class="dot-indicator dot-high"></span>{% endif %}</td>
+        <td class="muted">{{ row.created_at }}</td>
+        <td>{{ row.activity }}</td>
+        <td><span class="badge badge-{{ row.status.replace(' ','.') }}">{{ row.status }}</span></td>
+      </tr>
+      {% endfor %}
+      </tbody>
+    </table></div>
+    {% else %}<div class="empty-state">No activity yet.</div>{% endif %}
+  </section>
+
+  <div class="dashboard-quick-links">
+    <a class="dashboard-quick-link" href="{{ url_for('admin_requests') }}"><span class="quick-link-icon" aria-hidden="true">▤</span><span><strong>Manage Requests</strong><small>Review and update document requests</small></span><span class="quick-link-arrow" aria-hidden="true">→</span></a>
+    <a class="dashboard-quick-link" href="{{ url_for('admin_complaints') }}"><span class="quick-link-icon" aria-hidden="true">⚑</span><span><strong>Manage Concerns</strong><small>Track and resolve resident concerns</small></span><span class="quick-link-arrow" aria-hidden="true">→</span></a>
+  </div>
+</section>
+{% endblock %}

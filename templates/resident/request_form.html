@@ -1,0 +1,288 @@
+{% extends "base.html" %}
+{% block title %}New Request — BarangayConnect{% endblock %}
+{% block page_title %}Submit a Document Request{% endblock %}
+{% block content %}
+<div class="card request-form-card">
+  <form method="POST" enctype="multipart/form-data" class="form-grid" id="request-form">
+    <div class="request-form-layout">
+      <section class="request-form-panel form-grid" aria-labelledby="request-details-heading">
+        <h2 id="request-details-heading">Request details</h2>
+
+    <div class="form-row">
+      <label>Document type</label>
+      <select name="request_type" id="request_type" required>
+        <option value="" disabled {{ 'selected' if not form.get('request_type') }}>Select a document type</option>
+        {% for t in types %}
+        <option value="{{ t }}" {{ 'selected' if form.get('request_type')==t }}>{{ t }}</option>
+        {% endfor %}
+      </select>
+    </div>
+
+    <div class="form-row" id="purpose-indigency-row" style="display:none;">
+      <label>Purpose (Certificate of Indigency)</label>
+      <select name="purpose" id="purpose-indigency" class="purpose-field" disabled>
+        <option value="" disabled selected>Select a purpose</option>
+        {% for p in indigency_purposes %}
+        <option value="{{ p }}" {{ 'selected' if form.get('purpose')==p }}>{{ p }}</option>
+        {% endfor %}
+      </select>
+      <p class="hint">Certificate of Indigency is issued free of charge.</p>
+      <div id="indigency-requirement-uploads"></div>
+    </div>
+
+    <div class="form-row" id="purpose-residency-row" style="display:none;">
+      <label>Purpose (Certificate of Residency)</label>
+      <input type="text" name="purpose" id="purpose-residency" class="purpose-field" maxlength="120" disabled
+             value="{{ form.get('purpose','') if form.get('request_type')=='Certificate of Residency' else '' }}"
+             placeholder="e.g. Employment, School enrollment, Bank requirement">
+      <label style="display:flex; align-items:center; gap:8px; font-weight:600; margin-top:10px;">
+        <input type="checkbox" name="registered_voter" id="registered-voter" style="width:auto;" disabled
+               {{ 'checked' if form.get('registered_voter') }}>
+        I am a registered voter of this barangay
+      </label>
+      <div id="residency-fee-note" class="hint" style="margin-top:8px;"></div>
+      <div class="card" style="background:#FDF6E9; box-shadow:none; border-color:#F3E2BC; padding:12px 14px; margin-top:10px;">
+        <strong>How to get it:</strong>
+        <span class="hint" style="display:block; margin-top:4px;">
+          1) Pay the fee at the <strong>Barangay Treasurer Office</strong> (free for registered voters) and keep the official receipt.
+          2) When your request is Approved, claim the certificate at the <strong>Barangay Secretary Office</strong> and show your receipt.
+          Your uploaded valid ID should show your barangay address.
+        </span>
+      </div>
+    </div>
+
+    <div class="form-row" id="purpose-clearance-row" style="display:none;">
+      <label>Purpose (Barangay Clearance)</label>
+      <select name="purpose" id="purpose-clearance" class="purpose-field" disabled>
+        <option value="" disabled selected>Select a purpose</option>
+        {% for label, fee in clearance_purposes %}
+        <option value="{{ label }}" data-fee="{{ fee if fee is not none else '' }}" {{ 'selected' if form.get('purpose')==label }}>
+          {{ label }} — {{ 'Free' if fee == 0 else ('₱%d'|format(fee) if fee is not none else 'Inquire at office') }}
+        </option>
+        {% endfor %}
+      </select>
+      <div id="clearance-fee-note" class="hint" style="margin-top:8px;"></div>
+      <div id="clearance-free-note" class="hint" style="display:none; margin-top:8px; color:#B42318;">
+        Free for students, indigents, senior citizens, scholarship applicants, and PWDs — please make sure your uploaded valid ID shows this status.
+      </div>
+    </div>
+
+    <div class="form-row two">
+      <div class="form-row">
+        <label>Civil status</label>
+        <select name="civil_status" required>
+          <option value="" disabled {{ 'selected' if not form.get('civil_status') }}>Select civil status</option>
+          {% for cs in civil_status_options %}
+          <option value="{{ cs }}" {{ 'selected' if form.get('civil_status')==cs }}>{{ cs }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-row">
+        <label>Age</label>
+        <input type="text" inputmode="numeric" name="age" required value="{{ form.get('age','') }}">
+      </div>
+    </div>
+
+    <div class="form-row two">
+      <div class="form-row">
+        <label>Contact number</label>
+        <input type="tel" name="contact_number" required value="{{ form.get('contact_number','') }}" placeholder="09XX XXX XXXX">
+      </div>
+      <div class="form-row" id="num-copies-row" style="display:none;">
+        <label>Number of copies</label>
+        <input type="text" inputmode="numeric" name="num_copies" value="{{ form.get('num_copies','1') }}">
+      </div>
+    </div>
+
+    <div class="form-row">
+      <label>House No. / Street / Purok</label>
+      <input type="text" name="request_address" required value="{{ form.get('request_address','') }}" placeholder="e.g. Blk 3 Lot 5, Purok 2">
+    </div>
+
+    <div class="form-row">
+      <label>Preferred claiming date (optional)</label>
+      <input type="date" name="claiming_date" value="{{ form.get('claiming_date','') }}">
+    </div>
+
+    <div class="form-row">
+      <label>Additional remarks (optional)</label>
+      <textarea name="details" placeholder="Any extra information staff should know">{{ form.get('details','') }}</textarea>
+    </div>
+
+      </section>
+      <section class="request-form-panel form-grid" aria-labelledby="request-uploads-heading">
+        <h2 id="request-uploads-heading">Uploads &amp; claiming</h2>
+
+    <div class="form-row">
+      <label>Upload valid ID</label>
+      <input type="file" name="valid_id" required accept=".jpg,.jpeg,.png,.pdf" data-preview-for="valid-id-preview">
+      <span class="hint">Government-issued or school ID (if a student). JPG, PNG, or PDF, max 5MB.</span>
+      <div id="valid-id-preview" class="form-attachment-preview"></div>
+    </div>
+
+    <div class="form-row">
+      <label>Other supporting documents (optional)</label>
+      <input type="file" name="attachments" multiple accept=".jpg,.jpeg,.png,.pdf" data-preview-for="attachments-preview">
+      <span class="hint">e.g. proof of residency, cedula. JPG, PNG, or PDF only, up to 3 files.</span>
+      <div id="attachments-preview" class="form-attachment-preview"></div>
+    </div>
+
+    <div class="card" style="background:#F7F9FC; box-shadow:none; padding:16px; margin:4px 0;">
+      <label style="display:flex; align-items:center; gap:8px; font-weight:700; margin-bottom:4px;">
+        <input type="checkbox" name="has_representative" id="has_rep" style="width:auto;"
+               onchange="document.getElementById('rep-fields').style.display = this.checked ? 'grid' : 'none'">
+        Someone else will claim this on my behalf
+      </label>
+      <p class="hint" style="margin:0 0 10px;">Representatives must bring an authorization letter, a photocopy of your valid ID, and their own valid ID when claiming.</p>
+      <div id="rep-fields" class="form-grid" style="display:none;">
+        <div class="form-row two">
+          <div class="form-row">
+            <label>Representative's full name</label>
+            <input type="text" name="representative_name" value="{{ form.get('representative_name','') }}">
+          </div>
+          <div class="form-row">
+            <label>Representative's valid ID type</label>
+            <select name="representative_id_type">
+              <option value="" disabled {{ 'selected' if not form.get('representative_id_type') }}>Select ID type</option>
+              {% for idt in id_types %}
+              <option value="{{ idt }}" {{ 'selected' if form.get('representative_id_type')==idt }}>{{ idt }}</option>
+              {% endfor %}
+            </select>
+          </div>
+        </div>
+        <div class="form-row">
+          <label>Upload authorization letter</label>
+          <input type="file" name="authorization_letter" accept=".jpg,.jpeg,.png,.pdf" data-preview-for="auth-letter-preview">
+          <div id="auth-letter-preview" class="form-attachment-preview"></div>
+        </div>
+        <div class="form-row">
+          <label>Upload representative's valid ID (photo)</label>
+          <input type="file" name="representative_valid_id" accept=".jpg,.jpeg,.png,.pdf" data-preview-for="rep-id-preview">
+          <div id="rep-id-preview" class="form-attachment-preview"></div>
+        </div>
+      </div>
+    </div>
+
+      </section>
+    </div>
+
+    <div class="actions-row">
+      <button class="btn btn-primary" type="submit">Submit Request</button>
+      <a class="btn btn-outline" href="{{ url_for('resident_dashboard') }}">Cancel</a>
+    </div>
+  </form>
+</div>
+<script src="{{ url_for('static', filename='js/file-preview.js') }}"></script>
+<script>
+(function () {
+  var typeSelect = document.getElementById('request_type');
+  var indigencyRow = document.getElementById('purpose-indigency-row');
+  var clearanceRow = document.getElementById('purpose-clearance-row');
+  var indigencySelect = document.getElementById('purpose-indigency');
+  var clearanceSelect = document.getElementById('purpose-clearance');
+  var residencyRow = document.getElementById('purpose-residency-row');
+  var residencyInput = document.getElementById('purpose-residency');
+  var voterBox = document.getElementById('registered-voter');
+  var residencyFeeNote = document.getElementById('residency-fee-note');
+  var RESIDENCY_FEE = {{ residency_fee }};
+  var numCopiesRow = document.getElementById('num-copies-row');
+  var requirementUploads = document.getElementById('indigency-requirement-uploads');
+  var feeNote = document.getElementById('clearance-fee-note');
+  var freeNote = document.getElementById('clearance-free-note');
+
+  var indigencyRequirements = {{ indigency_requirements|tojson }};
+  var reqUploadCounter = 0;
+
+  function updatePurposeFields() {
+    var type = typeSelect.value;
+    // Nothing shows until a document type has actually been chosen.
+    indigencyRow.style.display = 'none';
+    clearanceRow.style.display = 'none';
+    indigencySelect.disabled = true;
+    clearanceSelect.disabled = true;
+    residencyRow.style.display = 'none';
+    residencyInput.disabled = true;
+    voterBox.disabled = true;
+    numCopiesRow.style.display = 'none';
+
+    if (type === 'Certificate of Indigency') {
+      indigencyRow.style.display = 'block';
+      indigencySelect.disabled = false;
+      numCopiesRow.style.display = 'block';
+      buildRequirementUploads();
+    } else if (type === 'Certificate of Residency') {
+      residencyRow.style.display = 'block';
+      residencyInput.disabled = false;
+      voterBox.disabled = false;
+      updateResidencyFee();
+    } else if (type === 'Barangay Clearance') {
+      clearanceRow.style.display = 'block';
+      clearanceSelect.disabled = false;
+      updateClearanceHint();
+    }
+  }
+
+  function buildRequirementUploads() {
+    requirementUploads.innerHTML = '';
+    var purpose = indigencySelect.value;
+    var reqs = indigencyRequirements[purpose];
+    if (!reqs) return;
+    reqs.forEach(function (label) {
+      reqUploadCounter++;
+      var previewId = 'req-upload-preview-' + reqUploadCounter;
+      var row = document.createElement('div');
+      row.className = 'form-row';
+      row.style.marginTop = '14px';
+      row.innerHTML =
+        '<label>Upload: ' + label + '</label>' +
+        '<input type="file" name="requirement_upload" required accept=".jpg,.jpeg,.png,.pdf" data-preview-for="' + previewId + '">' +
+        '<div id="' + previewId + '" class="form-attachment-preview"></div>';
+      requirementUploads.appendChild(row);
+      if (window.BCFilePreview) {
+        window.BCFilePreview.setup(row.querySelector('input[type=file]'));
+      }
+    });
+  }
+
+  function updateResidencyFee() {
+    residencyFeeNote.textContent = voterBox.checked
+      ? 'Fee: Free (registered voter). Bring proof of registration if the office asks for it.'
+      : 'Fee: \u20B1' + RESIDENCY_FEE + ' (pay at the Treasurer Office before claiming).';
+  }
+
+  function updateClearanceHint() {
+    var opt = clearanceSelect.options[clearanceSelect.selectedIndex];
+    var fee = opt ? opt.getAttribute('data-fee') : '';
+    if (!opt || opt.value === '') {
+      feeNote.textContent = '';
+      freeNote.style.display = 'none';
+      return;
+    }
+    if (fee === '') {
+      feeNote.textContent = 'Fee to be confirmed at the barangay office.';
+      freeNote.style.display = 'none';
+    } else if (fee === '0') {
+      feeNote.textContent = '';
+      freeNote.style.display = 'block';
+    } else {
+      feeNote.textContent = 'Fee: ₱' + fee + ' (paid in person upon claiming).';
+      freeNote.style.display = 'none';
+    }
+  }
+
+  typeSelect.addEventListener('change', updatePurposeFields);
+  indigencySelect.addEventListener('change', buildRequirementUploads);
+  clearanceSelect.addEventListener('change', updateClearanceHint);
+  voterBox.addEventListener('change', updateResidencyFee);
+
+  // On initial load, only pre-select a purpose section if a document type
+  // was already chosen (e.g. the form is re-rendering after a validation error).
+  if (typeSelect.value) {
+    updatePurposeFields();
+  }
+  if (document.getElementById('has_rep') && document.getElementById('has_rep').checked) {
+    document.getElementById('rep-fields').style.display = 'grid';
+  }
+})();
+</script>
+{% endblock %}

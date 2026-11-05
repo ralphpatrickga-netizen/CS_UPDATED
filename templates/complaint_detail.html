@@ -1,0 +1,117 @@
+{% extends "base.html" %}
+{% block title %}{{ c.reference_no }} — BarangayConnect{% endblock %}
+{% block page_title %}Complaint {{ c.reference_no }}{% endblock %}
+{% block content %}
+<div class="two-col">
+  <div class="card">
+    <div class="card-head">
+      <h3>{{ c.category }}</h3>
+      <div style="display:flex; gap:8px;">
+        <span class="badge priority-{{ c.priority }}">{{ '🟠' if c.priority=='High' else '🔵' }} {{ c.priority }}</span>
+        <span class="badge badge-{{ c.status.replace(' ','.') }}">{{ c.status }}</span>
+      </div>
+    </div>
+    <div class="detail-grid">
+      <div class="detail-item"><div class="k">Reference No.</div><div class="v ref-code">{{ c.reference_no }}</div></div>
+      <div class="detail-item"><div class="k">Filed by</div><div class="v">{{ resident.full_name }}</div></div>
+      <div class="detail-item"><div class="k">Date filed</div><div class="v">{{ c.created_at }}</div></div>
+      <div class="detail-item"><div class="k">Location</div><div class="v">{{ c.location or '—' }}</div></div>
+      <div class="detail-item"><div class="k">Resident address</div><div class="v">{{ resident.address or '—' }}</div></div>
+      <div class="detail-item"><div class="k">Resident contact</div><div class="v">{{ resident.contact_number or '—' }}</div></div>
+    </div>
+    <p><strong>Description:</strong> {{ c.description }}</p>
+    {% if c.remarks %}<p><strong>Staff remarks:</strong> {{ c.remarks }}</p>{% endif %}
+
+    {% if evidence %}
+    <div class="evidence-header">
+      <h4>Evidence Gallery</h4>
+      <span class="badge">{{ evidence|length }} attachment{% if evidence|length != 1 %}s{% endif %}</span>
+    </div>
+    <div class="attachment-grid">
+      {% for f in evidence %}
+        {% set file_url = url_for('serve_upload', subdir='complaints', stored_name=f.stored_name) %}
+        <div class="evidence-card">
+          {% if f.is_image %}
+          <a href="{{ file_url }}" target="_blank" rel="noopener" class="attachment-card attachment-image">
+            <img src="{{ file_url }}" alt="{{ f.filename }}">
+            <span class="attachment-overlay">View</span>
+          </a>
+          {% elif f.is_video %}
+          <div class="attachment-card attachment-video">
+            <video controls preload="metadata" muted playsinline>
+              <source src="{{ file_url }}" type="video/{{ f.extension }}">
+            </video>
+          </div>
+          {% else %}
+          <a href="{{ file_url }}" target="_blank" rel="noopener" class="attachment-card attachment-pdf">
+            <span class="attachment-pdf-icon">📄</span>
+            <span>{{ f.extension|upper or 'FILE' }}</span>
+          </a>
+          {% endif %}
+          <div class="evidence-meta">
+            <strong>{{ f.filename }}</strong>
+            <span>{{ f.size_label }}</span>
+            <span>{{ f.uploaded_at }}</span>
+            <a href="{{ file_url }}" target="_blank" rel="noopener">Open/Download</a>
+          </div>
+        </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <div class="empty-state small-empty">No evidence attached to this complaint.</div>
+    {% endif %}
+  </div>
+
+  <div>
+  {% if current_user.role in ['staff','admin'] %}
+  <div class="card">
+    <h3>Update Status</h3>
+    <form method="POST" action="{{ url_for('update_complaint_status', complaint_id=c.id) }}" class="form-grid">
+      <div class="form-row">
+        <label>Status</label>
+        <select name="status">
+          {% for s in statuses %}
+          <option value="{{ s }}" {{ 'selected' if c.status==s }}>{{ s }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-row">
+        <label>Assign to staff</label>
+        <select name="assigned_staff_id">
+          <option value="">Unassigned</option>
+          {% for s in staff_list %}
+          <option value="{{ s.id }}" {{ 'selected' if c.assigned_staff_id==s.id }}>{{ s.full_name }}</option>
+          {% endfor %}
+        </select>
+      </div>
+      <div class="form-row">
+        <label>Remarks</label>
+        <textarea name="remarks" placeholder="Notes visible to the resident">{{ c.remarks or '' }}</textarea>
+      </div>
+      <button class="btn btn-primary" type="submit">Save Update</button>
+    </form>
+  </div>
+  {% endif %}
+
+  <div class="card">
+    <h3>Status Timeline</h3>
+    {% if history %}
+    <div class="timeline">
+      {% for h in history %}
+      <div class="timeline-item">
+        <div class="timeline-dot"></div>
+        <div>
+          <div class="timeline-status">{{ h.status }}</div>
+          <div class="timeline-meta">{{ h.created_at }} — {{ h.changed_by_name }}</div>
+          {% if h.remarks %}<div class="timeline-remarks">{{ h.remarks }}</div>{% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}
+    <p class="muted">No status changes recorded yet.</p>
+    {% endif %}
+  </div>
+  </div>
+</div>
+{% endblock %}

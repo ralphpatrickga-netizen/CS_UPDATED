@@ -1,0 +1,31 @@
+```gitignore
+# Python environment
+venv/
+.venv/
+env/
+
+# Python cache
+__pycache__/
+*.py[cod]
+
+# Secrets and local settings
+.env
+.vscode/
+
+# Local database and backups
+instance/*
+!instance/.gitkeep
+*.db
+*.sqlite
+*.sqlite3
+
+# Private uploads and attachments
+uploads/*
+!uploads/.gitkeep
+
+# Logs and test cache
+*.log
+.pytest_cache/
+```
+# Old Git history backup
+.git-old-backup/

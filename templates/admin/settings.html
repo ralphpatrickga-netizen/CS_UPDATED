@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Settings — BarangayConnect{% endblock %}
+{% block page_title %}Settings{% endblock %}
+{% block content %}
+<div class="admin-settings-grid">
+<div class="card admin-settings-card">
+  <h3>Barangay Information</h3>
+  <p class="muted">These details appear on the resident-facing Emergency Hotlines page.</p>
+  <form method="POST" class="form-grid admin-settings-form">
+    {% for key, label in fields %}
+    <div class="form-row">
+      <label>{{ label }}</label>
+      <input type="text" name="{{ key }}" value="{{ values.get(key, '') }}">
+    </div>
+    {% endfor %}
+    <button class="btn btn-primary" type="submit">Save Settings</button>
+  </form>
+</div>
+
+<div class="card admin-settings-card">
+  <h3>Database Backup</h3>
+  <form method="POST" action="{{ url_for('create_backup') }}">
+    <button class="btn btn-primary" type="submit">Back up now &amp; download</button>
+  </form>
+  {% if backups %}
+  <div class="table-wrap" style="margin-top:14px;"><table>
+    <tr><th>Backup</th><th>Created</th><th>Size</th><th></th></tr>
+    {% for b in backups %}
+    <tr>
+      <td class="ref-code">{{ b.name }}</td>
+      <td class="muted">{{ b.created }}</td>
+      <td class="muted">{{ b.size_kb }} KB</td>
+      <td><a class="btn btn-outline btn-sm" href="{{ url_for('download_backup', name=b.name) }}">Download</a></td>
+    </tr>
+    {% endfor %}
+  </table></div>
+  {% else %}
+  <p class="hint" style="margin-top:10px;">No backups yet.</p>
+  {% endif %}
+</div>
+</div>
+{% endblock %}

@@ -1,0 +1,98 @@
+{% extends "base.html" %}
+{% block title %}Manage Staff — BarangayConnect{% endblock %}
+{% block page_title %}Manage Staff{% endblock %}
+{% block content %}
+<div class="card" style="max-width:640px;">
+  <h3>Create Staff Account</h3>
+  <p class="muted">Only Administrators can create staff accounts. A temporary password is generated and must be changed on first login.</p>
+  <form method="POST" class="form-grid">
+    <div class="form-row two">
+      <div class="form-row"><label>Full name</label><input type="text" name="full_name" required></div>
+      <div class="form-row"><label>Email</label><input type="email" name="email" required></div>
+    </div>
+    <div class="form-row">
+      <label>Philippine mobile number (optional for now)</label>
+      <input type="tel" name="contact_number" placeholder="0917 123 4567">
+    </div>
+    <div class="form-row">
+      <label>Office</label>
+      <select name="office" required>
+        <option value="">Select office…</option>
+        {% for key, cfg in offices.items() %}
+        <option value="{{ key }}">{{ cfg.label }} — {{ (cfg.requests + (['complaints'] if cfg.complaints else []))|join(', ') }}</option>
+        {% endfor %}
+      </select>
+      <div class="hint">The office decides what this staff member can see and process. Staff can only access their own office's work.</div>
+    </div>
+    <button class="btn btn-primary" type="submit">Create Staff Account</button>
+  </form>
+</div>
+
+<div class="card">
+  <h3>Office Coverage</h3>
+  <div class="table-wrap"><table>
+    <tr><th>Office</th><th>Handles</th><th>Active staff</th></tr>
+    {% for key, cfg in offices.items() %}
+    <tr>
+      <td>{{ cfg.label }}</td>
+      <td>{{ (cfg.requests + (['Complaints'] if cfg.complaints else []))|join(', ') }}</td>
+      <td>{% if coverage[key] %}{{ coverage[key] }}{% else %}<span class="badge badge-Rejected">None — nobody can process these</span>{% endif %}</td>
+    </tr>
+    {% endfor %}
+  </table></div>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h3>Staff Accounts</h3>
+    <span class="muted">Workload counts assigned requests and complaints that are still active.</span>
+  </div>
+  {% if rows %}
+  <div class="table-wrap"><table>
+    <tr><th>Name</th><th>Email</th><th>Mobile number</th><th>Office</th><th>Workload</th><th>Status</th><th>Created</th><th></th></tr>
+    {% for u in rows %}
+    <tr>
+      <td class="name-cell">
+        {% if u.profile_picture %}
+        <img class="avatar-thumb" src="{{ url_for('serve_upload', subdir='profiles', stored_name=u.profile_picture) }}" alt="">
+        {% else %}
+        <div class="avatar-thumb-fallback">{{ u.full_name[0] }}</div>
+        {% endif %}
+        {{ u.full_name }}
+      </td>
+      <td>{{ u.email }}</td>
+      <td>
+        <form method="POST" action="{{ url_for('update_account_mobile', account_id=u.id) }}" style="display:flex; gap:6px; align-items:center;">
+          <input type="tel" name="contact_number" value="{{ u.contact_number or '' }}" aria-label="Mobile number for {{ u.full_name }}" placeholder="0917 123 4567" required>
+          <button class="btn btn-outline btn-sm" type="submit">Save</button>
+        </form>
+      </td>
+      <td>
+        <form method="POST" action="{{ url_for('set_staff_office', staff_id=u.id) }}" style="display:flex; gap:6px; align-items:center;">
+          <select name="office" aria-label="Office">
+            {% if not u.office %}<option value="" selected disabled>Not assigned</option>{% endif %}
+            {% for key, cfg in offices.items() %}<option value="{{ key }}" {{ 'selected' if u.office==key }}>{{ cfg.label }}</option>{% endfor %}
+          </select>
+          <button class="btn btn-outline btn-sm" type="submit">Save</button>
+        </form>
+      </td>
+      <td>
+        <strong>{{ u.active_work_count }} active items</strong>
+        <div class="muted">{{ u.active_request_count }} requests · {{ u.active_complaint_count }} complaints</div>
+      </td>
+      <td><span class="badge badge-{{ 'Approved' if u.status=='active' else 'Rejected' }}">{{ u.status }}</span></td>
+      <td class="muted">{{ u.created_at }}</td>
+      <td class="actions-row">
+        <form method="POST" action="{{ url_for('toggle_staff', staff_id=u.id) }}">
+          <button class="btn btn-outline btn-sm" type="submit">{{ 'Deactivate' if u.status=='active' else 'Activate' }}</button>
+        </form>
+        <form method="POST" action="{{ url_for('reset_staff_password', staff_id=u.id) }}">
+          <button class="btn btn-outline btn-sm" type="submit">Reset Password</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table></div>
+  {% else %}<div class="empty-state">No staff accounts yet.</div>{% endif %}
+</div>
+{% endblock %}

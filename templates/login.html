@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Log In — BarangayConnect{% endblock %}
+{% block auth_content %}
+<div class="auth-wrap">
+  <div class="auth-card">
+    <div class="auth-logo">
+      <span class="brand-mark">BC</span>
+      <div>
+        <strong style="font-family:var(--font-display); color:var(--navy)">BarangayConnect</strong><br>
+        <small class="muted">Citizen Service Portal</small>
+      </div>
+    </div>
+    <h1>Welcome back</h1>
+    <p class="auth-sub">Log in to submit requests, file complaints, and track their status.</p>
+    <form method="POST" class="form-grid">
+      <div class="form-row">
+        <label>Email address</label>
+        <input type="email" name="email" required autofocus placeholder="juan.delacruz@email.com">
+      </div>
+      <div class="form-row">
+        <label>Password</label>
+        <input type="password" name="password" required placeholder="••••••••">
+      </div>
+      <button class="btn btn-primary btn-block" type="submit">Log In</button>
+    </form>
+    <div class="auth-foot">
+      <a href="{{ url_for('forgot_password') }}">Forgot password?</a>
+    </div>
+    <div class="auth-foot">
+      New resident? <a href="{{ url_for('register') }}">Create an account</a>
+    </div>
+  </div>
+</div>
+{% endblock %}

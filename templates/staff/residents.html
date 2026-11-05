@@ -1,0 +1,42 @@
+{% extends "base.html" %}
+{% block title %}Residents — BarangayConnect{% endblock %}
+{% block page_title %}Residents{% endblock %}
+{% block content %}
+<form class="filter-form" method="GET">
+  <div class="filter-grid">
+    <input type="text" name="q" value="{{ q }}" placeholder="Search by name or email">
+    <input type="text" name="address" value="{{ address }}" placeholder="Search address (street, barangay...)">
+    <select name="purok" aria-label="Purok">
+      <option value="">All puroks</option>
+      {% for p in puroks %}<option value="{{ p }}" {{ 'selected' if purok==p }}>Purok {{ p }}</option>{% endfor %}
+      <option value="none" {{ 'selected' if purok=='none' }}>No purok in address</option>
+    </select>
+    
+  </div>
+  <div class="actions-row">
+    <button class="btn btn-primary btn-sm" type="submit">Apply filters</button>
+    {% if q or address or purok or status %}<a class="btn btn-outline btn-sm" href="{{ url_for('view_residents') }}">Clear</a>{% endif %}
+    <span class="hint" style="align-self:center;">{{ rows|length }} resident(s)</span>
+  </div>
+</form>
+<div class="card">
+  {% if rows %}
+  <div class="table-wrap"><table>
+    <tr><th>Name</th><th>Email</th><th>Mobile number</th><th>Address</th><th>Registered</th></tr>
+    {% for u in rows %}
+    <tr>
+      <td>{{ u.full_name }}</td><td>{{ u.email }}</td>
+      <td>
+        <form method="POST" action="{{ url_for('update_account_mobile', account_id=u.id) }}" style="display:flex; gap:6px; align-items:center;">
+          <input type="tel" name="contact_number" value="{{ u.contact_number or '' }}" aria-label="Mobile number for {{ u.full_name }}" placeholder="0917 123 4567" required>
+          <button class="btn btn-outline btn-sm" type="submit">Save</button>
+        </form>
+      </td>
+      <td>{{ u.address or '—' }}</td>
+      <td class="muted">{{ u.created_at }}</td>
+    </tr>
+    {% endfor %}
+  </table></div>
+  {% else %}<div class="empty-state">No residents found.</div>{% endif %}
+</div>
+{% endblock %}

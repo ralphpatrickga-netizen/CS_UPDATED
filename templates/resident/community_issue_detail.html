@@ -1,0 +1,39 @@
+{% extends "base.html" %}
+{% block title %}Community Report — BarangayConnect{% endblock %}
+{% block page_title %}Community Report{% endblock %}
+{% block content %}
+<article class="card community-issue-detail">
+  <div class="community-report-heading">
+    <div>
+      <h2>{{ issue.category }}</h2>
+      <p class="muted">{{ issue.location }}</p>
+    </div>
+    <span class="badge badge-{{ issue.status.replace(' ','.') }}">{{ issue.status }}</span>
+  </div>
+  <p>{{ issue.distinct_residents }} residents have reported this issue ({{ issue.complaint_count }} reports).</p>
+  <p class="muted">First reported {{ issue.created_at }} · Last updated {{ issue.updated_at }}</p>
+  <p>{{ 'Residents reported ' ~ issue.category ~ ' in ' ~ (issue.location or 'an unspecified location') ~ '.' }}</p>
+  {% if following %}
+  <form method="POST" action="{{ url_for('unfollow_community_issue', issue_id=issue.id) }}">
+    <button class="btn btn-outline" type="submit">Unfollow Issue</button>
+  </form>
+  {% else %}
+  <form method="POST" action="{{ url_for('follow_community_issue', issue_id=issue.id) }}">
+    <button class="btn btn-primary" type="submit">Follow Issue</button>
+  </form>
+  {% endif %}
+</article>
+<section class="card community-issue-updates">
+  <h2>Status Updates</h2>
+  {% if updates %}
+  <ol class="timeline">
+    {% for update in updates %}
+    <li><strong>{{ update.status }}</strong><span class="muted">{{ update.created_at }}</span></li>
+    {% endfor %}
+  </ol>
+  {% else %}
+  <p class="muted">No status updates yet.</p>
+  {% endif %}
+</section>
+<a class="btn btn-outline" href="{{ url_for('community_reports') }}">Back to Community Reports</a>
+{% endblock %}

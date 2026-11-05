@@ -1,0 +1,100 @@
+{% extends "base.html" %}
+{% block title %}My Profile — BarangayConnect{% endblock %}
+{% block page_title %}My Profile{% endblock %}
+{% block content %}
+<div class="profile-settings-grid">
+<div class="card profile-settings-card">
+  <div style="display:flex; align-items:center; gap:18px; margin-bottom:20px;">
+    {% if current_user.profile_picture %}
+    <img src="{{ url_for('serve_upload', subdir='profiles', stored_name=current_user.profile_picture) }}"
+         alt="Profile picture" class="profile-avatar-lg">
+    {% else %}
+    <div class="profile-avatar-lg profile-avatar-fallback">{{ current_user.full_name[0] }}</div>
+    {% endif %}
+    <div>
+      <h3 style="margin-bottom:2px;">{{ current_user.full_name }}</h3>
+      <p class="muted" style="margin:0;">{{ current_user.email }}</p>
+      <span class="tag" style="margin-top:6px; display:inline-block; text-transform:capitalize;">
+        {{ 'Founding Administrator' if current_user.role=='admin' and current_user.is_super_admin else current_user.role }}
+      </span>
+    </div>
+  </div>
+
+  <form method="POST" enctype="multipart/form-data" class="form-grid">
+    <div class="form-row">
+      <label>Upload a new profile picture</label>
+      <div class="profile-file-control">
+        <label for="profile-picture-input" class="profile-file-picker">Choose File</label>
+        <input id="profile-picture-input" class="profile-file-input" type="file" name="profile_picture"
+               accept=".jpg,.jpeg,.png,image/jpeg,image/png" required
+               data-profile-preview="profile-pic-preview"
+               data-profile-error="profile-picture-error"
+               data-max-size="{{ profile_image_max_size }}"
+               data-max-size-label="{{ profile_image_max_size_mb }} MB"
+               aria-describedby="profile-picture-hint profile-picture-error">
+      </div>
+      <span id="profile-picture-hint" class="hint">JPG or PNG only (max {{ profile_image_max_size_mb }} MB)</span>
+      <div id="profile-pic-preview" class="profile-picture-preview" aria-live="polite">
+        {% if current_user.profile_picture %}
+        <img src="{{ url_for('serve_upload', subdir='profiles', stored_name=current_user.profile_picture) }}"
+             alt="Profile picture preview" class="profile-avatar-lg">
+        {% else %}
+        <div class="profile-avatar-lg profile-avatar-fallback">{{ current_user.full_name[0] }}</div>
+        {% endif %}
+      </div>
+      <span id="profile-picture-error" class="hint profile-upload-message" role="alert"></span>
+    </div>
+    <button class="btn btn-primary" type="submit">Save Profile Picture</button>
+  </form>
+
+  {% if current_user.position %}
+  <div class="detail-grid" style="margin-top:22px;">
+    <div class="detail-item"><div class="k">Position</div><div class="v">{{ current_user.position }}</div></div>
+    {% if current_user.office %}
+    <div class="detail-item"><div class="k">Office</div><div class="v">{{ office_labels.get(current_user.office, current_user.office) }}</div></div>
+    {% endif %}
+  </div>
+  {% endif %}
+</div>
+
+{% if current_user.role == 'resident' %}
+<div class="card profile-settings-card">
+  <h3>Address / Location</h3>
+  <p class="muted">This is used to pre-fill your document requests.</p>
+  <form method="POST" action="{{ url_for('update_address') }}" class="form-grid">
+    <div class="form-row">
+      <label>House No. / Street / Purok</label>
+      <input type="text" name="address" required value="{{ current_user.address or '' }}" placeholder="Purok / Street, Barangay">
+    </div>
+    <div class="form-row">
+      <label>Contact number</label>
+      <input type="tel" value="{{ current_user.contact_number or '' }}" readonly>
+      <span class="hint">Contact the barangay office to update the number used for SMS verification.</span>
+    </div>
+    <button class="btn btn-primary" type="submit">Save Address</button>
+  </form>
+</div>
+{% endif %}
+
+<div class="card profile-settings-card">
+  <h3>Change Password</h3>
+  <form method="POST" action="{{ url_for('change_password') }}" class="form-grid">
+    <div class="form-row">
+      <label>Current password</label>
+      <input type="password" name="current_password" required>
+    </div>
+    <div class="form-row">
+      <label>New password</label>
+      <input type="password" name="new_password" required>
+      <span class="hint">Min. 8 characters, with a letter and a number.</span>
+    </div>
+    <div class="form-row">
+      <label>Confirm new password</label>
+      <input type="password" name="confirm_password" required>
+    </div>
+    <button class="btn btn-primary" type="submit">Update Password</button>
+  </form>
+</div>
+</div>
+<script src="{{ url_for('static', filename='js/file-preview.js') }}"></script>
+{% endblock %}

@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}Requests — BarangayConnect{% endblock %}
+{% block page_title %}Requests{% endblock %}
+{% block content %}
+<p class="muted" style="margin:0 0 12px;">Showing: {{ handled_types|join(', ') }}</p>
+<form class="filter-toolbar" method="GET">
+  <div class="filter-select">
+    <label for="status-filter">Status</label>
+    <select id="status-filter" name="status" onchange="this.form.submit()">
+      <option value="">All</option>
+      {% for s in statuses %}
+      <option value="{{ s }}" {{ 'selected' if active_status==s else '' }}>{{ s }}</option>
+      {% endfor %}
+    </select>
+  </div>
+</form>
+<div class="card">
+  {% if rows %}
+  <div class="table-wrap"><table>
+    <tr><th>Reference</th><th>Resident</th><th>Type</th><th>Status</th><th>Filed</th><th></th></tr>
+    {% for r in rows %}
+    <tr>
+      <td class="ref-code">{{ r.reference_no }}</td>
+      <td>{{ r.resident_name }}</td>
+      <td>{{ r.request_type }}</td>
+      <td><span class="badge badge-{{ r.status.replace(' ','.') }}">{{ r.status }}</span></td>
+      <td class="muted">{{ r.created_at }}</td>
+      <td><a class="btn btn-outline btn-sm" href="{{ url_for('view_request', request_id=r.id) }}">Process</a></td>
+    </tr>
+    {% endfor %}
+  </table></div>
+  {% else %}<div class="empty-state">No requests found.</div>{% endif %}
+</div>
+{% endblock %}

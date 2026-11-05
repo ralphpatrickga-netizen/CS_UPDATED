@@ -1,0 +1,34 @@
+{% extends "base.html" %}
+{% block title %}My Complaints — BarangayConnect{% endblock %}
+{% block page_title %}My Complaints{% endblock %}
+{% block content %}
+<form class="filter-toolbar" method="GET">
+  <div class="filter-select">
+    <label for="status-filter">Status</label>
+    <select id="status-filter" name="status" onchange="this.form.submit()">
+      <option value="">All</option>
+      {% for s in statuses %}
+      <option value="{{ s }}" {{ 'selected' if active_status==s else '' }}>{{ s }}</option>
+      {% endfor %}
+    </select>
+  </div>
+</form>
+<div class="card">
+  {% if rows %}
+  <div class="table-wrap"><table>
+    <tr><th>Reference</th><th>Category</th><th>Status</th><th>Filed</th><th></th></tr>
+    {% for c in rows %}
+    <tr>
+      <td class="ref-code">{{ c.reference_no }}</td>
+      <td>{{ c.category }}</td>
+      <td><span class="badge badge-{{ c.status.replace(' ','.') }}">{{ c.status }}</span></td>
+      <td class="muted">{{ c.created_at }}</td>
+      <td><a class="btn btn-outline btn-sm" href="{{ url_for('view_complaint', complaint_id=c.id) }}">View</a></td>
+    </tr>
+    {% endfor %}
+  </table></div>
+  {% else %}
+  <div class="empty-state">No complaints found for this filter.</div>
+  {% endif %}
+</div>
+{% endblock %}

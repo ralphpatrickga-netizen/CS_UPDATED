@@ -1,0 +1,99 @@
+{% extends "base.html" %}
+{% block title %}Dashboard — BarangayConnect{% endblock %}
+{% block page_title %}My Dashboard{% endblock %}
+{% block content %}
+
+<section class="resident-dashboard" aria-label="Resident dashboard">
+<div class="resident-dashboard-intro">
+  <p>Overview of your barangay transactions</p>
+</div>
+
+{% if announcements %}
+<div class="card" style="background:#EAF7FB; border-color:#C7ECF4;">
+  <h3 style="margin-bottom:10px;">Barangay Announcements</h3>
+  {% for a in announcements %}
+  <div style="margin-bottom:{{ '12px' if not loop.last else '0' }};">
+    <strong>{{ a.title }}</strong>
+    <p class="muted" style="margin:2px 0 0;">{{ a.message }}</p>
+    <span class="muted" style="font-size:11.5px;">{{ a.created_at }}</span>
+  </div>
+  {% endfor %}
+</div>
+{% endif %}
+
+<div class="stat-grid">
+  <div class="stat-card accent-cyan"><div class="resident-stat-heading"><span aria-hidden="true">▤</span><div class="num">{{ active_requests }}</div></div><div class="label">Active Requests</div></div>
+  <div class="stat-card accent-amber"><div class="resident-stat-heading"><span aria-hidden="true">◷</span><div class="num">{{ pending_complaints }}</div></div><div class="label">Pending Complaints</div></div>
+  <div class="stat-card"><div class="resident-stat-heading"><span aria-hidden="true">♧</span><div class="num">{{ unread_count }}</div></div><div class="label">Unread Notifications</div></div>
+  <div class="stat-card"><div class="resident-stat-heading"><span aria-hidden="true">✓</span><div class="num">{{ requests|selectattr('status','equalto','Completed')|list|length }}</div></div><div class="label">Completed Requests</div></div>
+</div>
+
+<div class="resident-quick-actions" aria-label="Quick actions">
+  <a class="resident-quick-action request-action" href="{{ url_for('new_request') }}"><span aria-hidden="true">＋</span>New Request</a>
+  <a class="resident-quick-action complaint-action" href="{{ url_for('new_complaint') }}"><span aria-hidden="true">⊕</span>File Complaint</a>
+</div>
+
+<div class="two-col">
+  <div class="card">
+    <div class="card-head">
+      <h3>Recent Requests</h3>
+      <a class="btn btn-outline btn-sm" href="{{ url_for('new_request') }}">+ New Request</a>
+    </div>
+    {% if requests %}
+    <div class="table-wrap"><table class="resident-requests-table">
+      <thead><tr><th>Reference</th><th>Type</th><th>Status</th><th>Filed</th></tr></thead>
+      <tbody>
+        {% for r in requests %}
+        <tr onclick="window.location='{{ url_for('view_request', request_id=r.id) }}'" style="cursor:pointer;">
+          <td class="ref-code">{{ r.reference_no }}</td>
+          <td>{{ r.request_type }}</td>
+          <td><span class="badge badge-{{ r.status.replace(' ','.') }}">{{ r.status }}</span></td>
+          <td class="muted">{{ r.created_at }}</td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table></div>
+    {% else %}
+    <div class="empty-state">No requests yet. <a href="{{ url_for('new_request') }}">Submit your first request</a>.</div>
+    {% endif %}
+  </div>
+
+  <div class="card">
+    <div class="card-head">
+      <h3>Recent Complaints</h3>
+      <a class="btn btn-outline btn-sm" href="{{ url_for('new_complaint') }}">+ File Complaint</a>
+    </div>
+    {% if complaints %}
+    <div class="table-wrap"><table class="resident-complaints-table">
+      <thead><tr><th>Reference</th><th>Category</th><th>Status</th></tr></thead>
+      <tbody>
+        {% for c in complaints %}
+        <tr onclick="window.location='{{ url_for('view_complaint', complaint_id=c.id) }}'" style="cursor:pointer;">
+          <td class="ref-code">{{ c.reference_no }}</td>
+          <td>{{ c.category }}</td>
+          <td><span class="badge badge-{{ c.status.replace(' ','.') }}">{{ c.status }}</span></td>
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table></div>
+    {% else %}
+    <div class="empty-state">No complaints filed. <a href="{{ url_for('new_complaint') }}">File one now</a>.</div>
+    {% endif %}
+  </div>
+</div>
+
+<div class="card">
+  <div class="card-head"><h3>Recent Notifications</h3><a class="btn btn-outline btn-sm" href="{{ url_for('notifications') }}">View All</a></div>
+  {% if notes %}
+    {% for n in notes %}
+    <div class="notif-item {{ 'read' if n.is_read }}">
+      <div class="notif-dot"></div>
+      <div><div>{{ n.message }}</div><div class="notif-time">{{ n.created_at }}</div></div>
+    </div>
+    {% endfor %}
+  {% else %}
+  <div class="empty-state">You're all caught up.</div>
+  {% endif %}
+</div>
+</section>
+{% endblock %}

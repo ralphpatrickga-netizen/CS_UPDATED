@@ -1,0 +1,28 @@
+{% extends "base.html" %}
+{% block title %}Notifications — BarangayConnect{% endblock %}
+{% block page_title %}Notifications{% endblock %}
+{% block content %}
+<div class="card">
+  <div class="card-head">
+    <h3>All Notifications</h3>
+    {% if rows %}
+    <form method="POST" action="{{ url_for('mark_notifications_read') }}">
+      <button class="btn btn-outline btn-sm" type="submit">Mark all as read</button>
+    </form>
+    {% endif %}
+  </div>
+  {% if rows %}
+    {% for n in rows %}
+    <div class="notif-item {{ 'read' if n.is_read }}">
+      <div class="notif-dot"></div>
+      <div>
+        {% if n.link %}<a href="{{ n.link }}">{{ n.message }}</a>{% else %}{{ n.message }}{% endif %}
+        <div class="notif-time">{{ n.created_at }}</div>
+      </div>
+    </div>
+    {% endfor %}
+  {% else %}
+  <div class="empty-state">No notifications yet.</div>
+  {% endif %}
+</div>
+{% endblock %}

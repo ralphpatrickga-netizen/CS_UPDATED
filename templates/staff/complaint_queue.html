@@ -1,0 +1,45 @@
+{% extends "base.html" %}
+{% block title %}Complaints — BarangayConnect{% endblock %}
+{% block page_title %}Complaints{% endblock %}
+{% block content %}
+<div class="filter-chips">
+  <a class="chip {{ 'active' if not active_priority }}" href="{{ url_for('staff_complaints', status=active_status) }}">All Priorities</a>
+  {% for p in priorities %}
+  <a class="chip {{ 'active' if active_priority==p }}" href="{{ url_for('staff_complaints', status=active_status, priority=p) }}">{{ '🟠' if p=='High' else '🔵' }} {{ p }}</a>
+  {% endfor %}
+</div>
+<form class="filter-toolbar" method="GET">
+  <div class="filter-select">
+    <label for="status-filter">Status</label>
+    <select id="status-filter" name="status" onchange="this.form.submit()">
+      <option value="">All Statuses</option>
+      {% for s in statuses %}
+      <option value="{{ s }}" {{ 'selected' if active_status==s else '' }}>{{ s }}</option>
+      {% endfor %}
+    </select>
+    {% if active_priority %}
+    <input type="hidden" name="priority" value="{{ active_priority }}">
+    {% endif %}
+  </div>
+</form>
+<div class="card">
+  {% if rows %}
+  <div class="table-wrap"><table>
+    <tr><th>Priority</th><th>Reference</th><th>Resident</th><th>Address</th><th>Contact</th><th>Category</th><th>Status</th><th>Filed</th><th></th></tr>
+    {% for c in rows %}
+    <tr class="priority-row-{{ c.priority }}">
+      <td><span class="badge priority-{{ c.priority }}">{{ '🟠' if c.priority=='High' else '🔵' }} {{ c.priority }}</span></td>
+      <td class="ref-code">{{ c.reference_no }}</td>
+      <td>{{ c.resident_name }}</td>
+      <td>{{ c.resident_address or '—' }}</td>
+      <td>{{ c.resident_contact or '—' }}</td>
+      <td>{{ c.category }}</td>
+      <td><span class="badge badge-{{ c.status.replace(' ','.') }}">{{ c.status }}</span></td>
+      <td class="muted">{{ c.created_at }}</td>
+      <td><a class="btn btn-outline btn-sm" href="{{ url_for('view_complaint', complaint_id=c.id) }}">Process</a></td>
+    </tr>
+    {% endfor %}
+  </table></div>
+  {% else %}<div class="empty-state">No complaints found.</div>{% endif %}
+</div>
+{% endblock %}

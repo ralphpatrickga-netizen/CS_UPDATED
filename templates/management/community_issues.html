@@ -1,0 +1,63 @@
+{% extends "base.html" %}
+{% block title %}Clustered Issues — BarangayConnect{% endblock %}
+{% block page_title %}Clustered Issues{% endblock %}
+{% block content %}
+<p class="muted">Review linked concern reports, verify each report, and publish shared status updates to reporters and followers.</p>
+
+<div class="stat-grid community-management-stats">
+  <div class="stat-card accent-amber"><div class="num">{{ stats.pending_review }}</div><div class="label">Pending Review</div></div>
+  <div class="stat-card"><div class="num">{{ stats.clustered }}</div><div class="label">Clustered Issues</div></div>
+  <div class="stat-card accent-cyan"><div class="num">{{ stats.in_progress }}</div><div class="label">In Progress</div></div>
+  <div class="stat-card accent-green"><div class="num">{{ stats.resolved }}</div><div class="label">Resolved</div></div>
+</div>
+
+<form class="filter-toolbar community-issue-filters" method="GET">
+  <div class="filter-select">
+    <label for="issue-status-filter">Status</label>
+    <select id="issue-status-filter" name="status">
+      <option value="">All statuses</option>
+      {% for status in statuses %}
+      <option value="{{ status }}" {{ 'selected' if active_status == status else '' }}>{{ status }}</option>
+      {% endfor %}
+    </select>
+  </div>
+  <div class="filter-select">
+    <label for="verification-filter">Report verification</label>
+    <select id="verification-filter" name="verification">
+      <option value="all" {{ 'selected' if verification_filter == 'all' else '' }}>All reports</option>
+      <option value="pending" {{ 'selected' if verification_filter == 'pending' else '' }}>Needs verification</option>
+      <option value="verified" {{ 'selected' if verification_filter == 'verified' else '' }}>Fully verified</option>
+    </select>
+  </div>
+  <div class="filter-search">
+    <label for="community-issue-search">Category or location</label>
+    <input id="community-issue-search" type="search" name="q" value="{{ search }}" placeholder="Search issues">
+  </div>
+  <button class="btn btn-primary" type="submit">Filter</button>
+</form>
+
+{% if issues %}
+<div class="community-report-list">
+  {% for issue in issues %}
+  <article class="card community-report-card management-issue-card">
+    <div class="community-report-heading">
+      <div>
+        <h2>{{ issue.category }}</h2>
+        <p class="muted">{{ issue.location }} · {{ issue.resident_count }} resident{{ 's' if issue.resident_count != 1 }} · {{ issue.report_count }} report{{ 's' if issue.report_count != 1 }}</p>
+      </div>
+      <span class="badge badge-{{ issue.status.replace(' ','.') }}">{{ issue.status }}</span>
+    </div>
+    <div class="management-issue-meta">
+      <span>First reported {{ issue.created_at }}</span>
+      <span>{{ issue.pending_verification }} report{{ 's' if issue.pending_verification != 1 }} awaiting verification</span>
+    </div>
+    <div class="community-report-actions">
+      <a class="btn btn-primary btn-sm" href="{{ url_for('community_issue_management_detail', issue_id=issue.id) }}">Review Issue & Reports</a>
+    </div>
+  </article>
+  {% endfor %}
+</div>
+{% else %}
+<div class="card empty-state">No clustered issues match these filters.</div>
+{% endif %}
+{% endblock %}

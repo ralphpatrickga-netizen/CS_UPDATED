@@ -1,0 +1,36 @@
+{% extends "base.html" %}
+{% block title %}Reports — BarangayConnect{% endblock %}
+{% block page_title %}Reports &amp; Analytics{% endblock %}
+{% block content %}
+<div class="filter-chips">
+  {% for key, label in [('daily','Daily'), ('weekly','Weekly'), ('monthly','Monthly'), ('yearly','Yearly')] %}
+  <a class="chip {{ 'active' if report.range==key }}" href="{{ url_for('admin_reports', range=key) }}">{{ label }}</a>
+  {% endfor %}
+</div>
+
+<div class="stat-grid">
+  <div class="stat-card accent-cyan"><div class="num">{{ report.total_requests }}</div><div class="label">Total Requests</div></div>
+  <div class="stat-card"><div class="num">{{ report.total_complaints }}</div><div class="label">Total Complaints</div></div>
+  <div class="stat-card accent-amber"><div class="num">{{ report.approval_rate }}%</div><div class="label">Approval/Completion Rate</div></div>
+  <div class="stat-card"><div class="num">{{ report.resolution_rate }}%</div><div class="label">Complaint Resolution Rate</div></div>
+</div>
+
+<div class="card">
+  <div class="card-head">
+    <h3>Staff Activity ({{ report.range|title }})</h3>
+    <div class="actions-row">
+      <a class="btn btn-outline btn-sm" href="{{ url_for('export_report', range=report.range, format='xlsx') }}">Export Excel</a>
+      <a class="btn btn-outline btn-sm" href="{{ url_for('export_report', range=report.range, format='pdf') }}">Export PDF</a>
+    </div>
+  </div>
+  <p class="muted">New residents this period: {{ report.new_residents }}</p>
+  {% if report.staff_activity %}
+  <div class="table-wrap"><table>
+    <tr><th>Staff Member</th><th>Actions Logged</th></tr>
+    {% for row in report.staff_activity %}
+    <tr><td>{{ row.full_name }}</td><td>{{ row.actions }}</td></tr>
+    {% endfor %}
+  </table></div>
+  {% else %}<div class="empty-state">No staff activity logged for this period.</div>{% endif %}
+</div>
+{% endblock %}

@@ -1,0 +1,76 @@
+{% extends "base.html" %}
+{% block title %}Emergency Hotlines — BarangayConnect{% endblock %}
+{% block page_title %}Emergency Hotlines{% endblock %}
+{% block content %}
+<div class="card" style="background:#FDECEC; border-color:#F6C6C6;">
+  <p style="margin:0; color:#B42318; font-weight:600;">
+    ⚠️ This portal is for non-emergency barangay requests and concerns only. It is
+    not monitored for urgent situations. For emergencies, call the numbers below directly.
+  </p>
+</div>
+
+<div class="two-col">
+  <div class="card">
+    <h3>National Emergency Hotline</h3>
+    <div class="detail-grid">
+      <div class="detail-item"><div class="k">All-in-one emergency (police, fire, medical)</div><div class="v">911</div></div>
+    </div>
+  </div>
+  <div class="card">
+    <h3>Philippine National Police</h3>
+    <div class="detail-grid">
+      <div class="detail-item"><div class="k">PNP Hotline</div><div class="v">117</div></div>
+      <div class="detail-item"><div class="k">Text Hotline</div><div class="v">0917-847-5757</div></div>
+    </div>
+  </div>
+</div>
+
+<div class="two-col">
+  <div class="card">
+    <h3>Fire &amp; Medical</h3>
+    <div class="detail-grid">
+      <div class="detail-item"><div class="k">Bureau of Fire Protection</div><div class="v">(02) 8426-0219</div></div>
+      <div class="detail-item"><div class="k">Philippine Red Cross</div><div class="v">143</div></div>
+    </div>
+  </div>
+  <div class="card">
+    <h3>{{ values.get('barangay_name') or 'Barangay Contacts' }}</h3>
+    {% if values.get('barangay_address') %}<p class="muted" style="margin-top:-6px;">{{ values.get('barangay_address') }}</p>{% endif %}
+    <div class="detail-grid">
+      <div class="detail-item"><div class="k">Main Line</div><div class="v">{{ values.get('barangay_main_number') or 'Not yet set' }}</div></div>
+      <div class="detail-item"><div class="k">100 Base</div><div class="v">{{ values.get('barangay_base_number') or 'Not yet set' }}</div></div>
+      <div class="detail-item"><div class="k">Annex</div><div class="v">{{ values.get('barangay_annex_number') or 'Not yet set' }}</div></div>
+      <div class="detail-item"><div class="k">Annex II</div><div class="v">{{ values.get('barangay_annex2_number') or 'Not yet set' }}</div></div>
+    </div>
+  </div>
+</div>
+
+<div class="two-col">
+  <div class="card">
+    <h3>Barangay Response Teams</h3>
+    <div class="detail-grid">
+      <div class="detail-item"><div class="k">BDRRM (Disaster Response)</div><div class="v">{{ values.get('bdrrm_number') or 'Not yet set' }}</div></div>
+      <div class="detail-item"><div class="k">BHERT (Health Emergency)</div><div class="v">{{ values.get('bhert_number') or 'Not yet set' }}</div></div>
+      <div class="detail-item"><div class="k">MRCF</div><div class="v">{{ values.get('mrcf_number') or 'Not yet set' }}</div></div>
+      <div class="detail-item"><div class="k">Traffic</div><div class="v">{{ values.get('traffic_number') or 'Not yet set' }}</div></div>
+      <div class="detail-item"><div class="k">Dogpound</div><div class="v">{{ values.get('dogpound_number') or 'Not yet set' }}</div></div>
+    </div>
+  </div>
+  <div class="card">
+    <h3>PNP &amp; BFP (Local Detachment)</h3>
+    <div class="detail-grid">
+      <div class="detail-item"><div class="k">PNP</div><div class="v">{{ values.get('pnp_number') or 'Not yet set' }}</div></div>
+      <div class="detail-item"><div class="k">BFP</div><div class="v">{{ values.get('bfp_number') or 'Not yet set' }}</div></div>
+    </div>
+  </div>
+</div>
+
+<div class="card">
+  <h3>Other National Hotlines</h3>
+  <div class="detail-grid">
+    <div class="detail-item"><div class="k">NBI Hotline</div><div class="v">(02) 8523-8231 to 38</div></div>
+    <div class="detail-item"><div class="k">DSWD Hotline</div><div class="v">(02) 8931-8101</div></div>
+    <div class="detail-item"><div class="k">National Center for Mental Health Crisis Line</div><div class="v">1553 / 0966-351-4518</div></div>
+  </div>
+</div>
+{% endblock %}

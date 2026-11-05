@@ -1,0 +1,147 @@
+{% extends "base.html" %}
+{% block title %}{{ r.reference_no }} — BarangayConnect{% endblock %}
+{% block page_title %}Request {{ r.reference_no }}{% endblock %}
+{% block content %}
+<div class="two-col">
+  <div class="card no-print">
+    <div class="card-head">
+      <h3>{{ r.request_type }}</h3>
+      <span class="badge badge-{{ r.status.replace(' ','.') }}">{{ r.status }}</span>
+    </div>
+    <div class="detail-grid">
+      <div class="detail-item"><div class="k">Reference No.</div><div class="v ref-code">{{ r.reference_no }}</div></div>
+      <div class="detail-item"><div class="k">Filed by</div><div class="v">{{ resident.full_name }}</div></div>
+      <div class="detail-item"><div class="k">Date filed</div><div class="v">{{ r.created_at }}</div></div>
+      <div class="detail-item"><div class="k">Last updated</div><div class="v">{{ r.updated_at }}</div></div>
+      <div class="detail-item"><div class="k">Civil status</div><div class="v">{{ r.civil_status or '—' }}</div></div>
+      <div class="detail-item"><div class="k">Age</div><div class="v">{{ r.age or '—' }}</div></div>
+      <div class="detail-item"><div class="k">Contact number</div><div class="v">{{ r.contact_number or '—' }}</div></div>
+      <div class="detail-item"><div class="k">House No. / Street / Purok</div><div class="v">{{ r.request_address or '—' }}</div></div>
+      {% if r.request_type == 'Certificate of Indigency' %}
+      <div class="detail-item"><div class="k">Number of copies</div><div class="v">{{ r.num_copies }}</div></div>
+      {% endif %}
+      <div class="detail-item"><div class="k">Preferred claiming date</div><div class="v">{{ r.claiming_date or 'Not specified' }}</div></div>
+      {% if r.request_type == 'Certificate of Residency' %}
+      <div class="detail-item"><div class="k">Registered voter</div><div class="v">{{ 'Yes' if r.registered_voter else 'No' }}</div></div>
+      {% endif %}
+      <div class="detail-item"><div class="k">Processing fee</div>
+        <div class="v">{{ 'Free' if fee == 0 else ('₱%d'|format(fee) if fee is not none else 'Inquire at office') }}
+          {% if payment_location and fee != 0 %}<span class="muted"> (pay at the {{ payment_location }} first, then present the receipt at the {{ claim_location }})</span>
+          {% else %}<span class="muted"> (paid in person upon claiming)</span>{% endif %}
+        </div>
+      </div>
+    </div>
+    <p><strong>Purpose:</strong> {{ r.purpose }}</p>
+    {% if r.details %}<p><strong>Details:</strong> {{ r.details }}</p>{% endif %}
+    {% if r.remarks %}<p><strong>Staff remarks:</strong> {{ r.remarks }}</p>{% endif %}
+
+    {% if r.has_representative %}
+    <div class="card" style="background:#FDF6E9; box-shadow:none; border-color:#F3E2BC; padding:14px 16px;">
+      <strong>Claiming via representative</strong>
+      <p class="muted" style="margin:6px 0 0;">{{ r.representative_name }} — presenting {{ r.representative_id_type or 'a valid ID' }}</p>
+    </div>
+    {% endif %}
+
+    {% if files %}
+    <h4>Attachments</h4>
+    <div class="attachment-grid">
+      {% for f in files %}
+        {% set ext = f.filename.lower().rsplit('.', 1)[-1] if '.' in f.filename else '' %}
+        {% set file_url = url_for('serve_upload', subdir='requests', stored_name=f.stored_name) %}
+        {% set caption = f.label if f.label else ('Valid ID' if f.file_type == 'valid_id' else ('Authorization Letter' if f.file_type == 'authorization_letter' else ('Representative\'s ID' if f.file_type == 'representative_id' else 'Supporting Document'))) %}
+        <div>
+          {% if ext in ['jpg','jpeg','png'] %}
+          <a href="{{ file_url }}" target="_blank" class="attachment-card attachment-image">
+            <img src="{{ file_url }}" alt="{{ caption }}">
+            <span class="attachment-overlay">View full size</span>
+          </a>
+          {% else %}
+          <a href="{{ file_url }}" target="_blank" class="attachment-card attachment-pdf">
+            <span class="attachment-pdf-icon">📄</span>
+            <span>View PDF</span>
+          </a>
+          {% endif %}
+          <div class="attachment-caption">{{ caption }}</div>
+        </div>
+      {% endfor %}
+    </div>
+    {% endif %}
+  </div>
+
+  <div>
+    {% if current_user.role in ['staff','admin'] %}
+    <div class="card no-print">
+      <h3>Update Status</h3>
+      <form method="POST" action="{{ url_for('update_request_status', request_id=r.id) }}" class="form-grid">
+        <div class="form-row">
+          <label>Status</label>
+          <select name="status">
+            {% for s in statuses %}
+            <option value="{{ s }}" {{ 'selected' if r.status==s }}>{{ s }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-row">
+          <label>Assign to staff</label>
+          <select name="assigned_staff_id">
+            <option value="">Unassigned</option>
+            {% for s in staff_list %}
+            <option value="{{ s.id }}" {{ 'selected' if r.assigned_staff_id==s.id }}>{{ s.full_name }}</option>
+            {% endfor %}
+          </select>
+        </div>
+        <div class="form-row">
+          <label>Remarks</label>
+          <textarea name="remarks" placeholder="Notes visible to the resident">{{ r.remarks or '' }}</textarea>
+        </div>
+        <button class="btn btn-primary" type="submit">Save Update</button>
+      </form>
+    </div>
+    {% endif %}
+
+    {% if r.status in ['Approved', 'Completed'] %}
+    <div class="card claim-slip">
+      <img class="claim-slip-watermark" src="{{ url_for('static', filename='images/barangay-seal.png') }}" alt="" aria-hidden="true">
+      <div class="card-head"><h3>Claim Slip</h3><button class="btn btn-outline btn-sm no-print" onclick="window.print()">Print</button></div>
+      {% if barangay_address %}<p class="muted" style="margin-top:-8px;">{{ barangay_address }}</p>{% endif %}
+      <p class="muted">Present this reference number at the <strong>{{ claim_location }}</strong> to claim your document.</p>
+      <div class="detail-grid">
+        <div class="detail-item"><div class="k">Reference No.</div><div class="v ref-code">{{ r.reference_no }}</div></div>
+        <div class="detail-item"><div class="k">Document</div><div class="v">{{ r.request_type }}</div></div>
+        <div class="detail-item"><div class="k">Claimant</div><div class="v">{{ resident.full_name }}</div></div>
+        {% if r.request_type == 'Certificate of Indigency' %}
+        <div class="detail-item"><div class="k">Copies</div><div class="v">{{ r.num_copies }}</div></div>
+        {% endif %}
+        <div class="detail-item"><div class="k">Amount to pay</div><div class="v">{{ 'Free' if fee == 0 else ('₱%d'|format(fee) if fee is not none else 'Inquire at office') }}</div></div>
+        {% if payment_location and fee != 0 %}
+        <div class="detail-item"><div class="k">Pay first at</div><div class="v">{{ payment_location }} (bring the official receipt)</div></div>
+        {% endif %}
+        <div class="detail-item"><div class="k">Claim at</div><div class="v">{{ claim_location }}</div></div>
+        <div class="detail-item"><div class="k">Preferred date</div><div class="v">{{ r.claiming_date or 'Anytime during office hours' }}</div></div>
+      </div>
+      {% if r.has_representative %}<p class="muted">Representative: {{ r.representative_name }} ({{ r.representative_id_type }})</p>{% endif %}
+    </div>
+    {% endif %}
+
+    <div class="card no-print">
+      <h3>Status Timeline</h3>
+      {% if history %}
+      <div class="timeline">
+        {% for h in history %}
+        <div class="timeline-item">
+          <div class="timeline-dot"></div>
+          <div>
+            <div class="timeline-status">{{ h.status }}</div>
+            <div class="timeline-meta">{{ h.created_at }} — {{ h.changed_by_name }}</div>
+            {% if h.remarks %}<div class="timeline-remarks">{{ h.remarks }}</div>{% endif %}
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+      {% else %}
+      <p class="muted">No status changes recorded yet.</p>
+      {% endif %}
+    </div>
+  </div>
+</div>
+{% endblock %}

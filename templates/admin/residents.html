@@ -1,0 +1,65 @@
+{% extends "base.html" %}
+{% block title %}Manage Residents — BarangayConnect{% endblock %}
+{% block page_title %}Manage Residents{% endblock %}
+{% block content %}
+<form class="filter-form" method="GET">
+  <div class="filter-grid">
+    <input type="text" name="q" value="{{ q }}" placeholder="Search by name or email">
+    <input type="text" name="address" value="{{ address }}" placeholder="Search address (street, barangay...)">
+    <select name="purok" aria-label="Purok">
+      <option value="">All puroks</option>
+      {% for p in puroks %}<option value="{{ p }}" {{ 'selected' if purok==p }}>Purok {{ p }}</option>{% endfor %}
+      <option value="none" {{ 'selected' if purok=='none' }}>No purok in address</option>
+    </select>
+    <select name="status" aria-label="Status">
+      <option value="">All statuses</option>
+      <option value="active" {{ 'selected' if status=='active' }}>Active</option>
+      <option value="inactive" {{ 'selected' if status=='inactive' }}>Inactive</option>
+    </select>
+  </div>
+  <div class="actions-row">
+    <button class="btn btn-primary btn-sm" type="submit">Apply filters</button>
+    {% if q or address or purok or status %}<a class="btn btn-outline btn-sm" href="{{ url_for('admin_residents') }}">Clear</a>{% endif %}
+    <span class="hint" style="align-self:center;">{{ rows|length }} resident(s)</span>
+  </div>
+</form>
+<p class="hint" style="margin-top:-10px; margin-bottom:14px;">
+  Mark a resident Inactive if they've moved away or asked to close their account — you'll typically
+  learn this when they request a clearance for moving, or inform the barangay in person. This blocks
+  their login without deleting their records.
+</p>
+<div class="card">
+  {% if rows %}
+  <div class="table-wrap"><table>
+    <tr><th>Name</th><th>Email</th><th>Mobile number</th><th>Address</th><th>Status</th><th>Registered</th><th></th></tr>
+    {% for u in rows %}
+    <tr>
+      <td class="name-cell">
+        {% if u.profile_picture %}
+        <img class="avatar-thumb" src="{{ url_for('serve_upload', subdir='profiles', stored_name=u.profile_picture) }}" alt="">
+        {% else %}
+        <div class="avatar-thumb-fallback">{{ u.full_name[0] }}</div>
+        {% endif %}
+        {{ u.full_name }}
+      </td>
+      <td>{{ u.email }}</td>
+      <td>
+        <form method="POST" action="{{ url_for('update_account_mobile', account_id=u.id) }}" style="display:flex; gap:6px; align-items:center;">
+          <input type="tel" name="contact_number" value="{{ u.contact_number or '' }}" aria-label="Mobile number for {{ u.full_name }}" placeholder="0917 123 4567" required>
+          <button class="btn btn-outline btn-sm" type="submit">Save</button>
+        </form>
+      </td>
+      <td>{{ u.address or '—' }}</td>
+      <td><span class="badge badge-{{ 'Approved' if u.status=='active' else 'Rejected' }}">{{ u.status }}</span></td>
+      <td class="muted">{{ u.created_at }}</td>
+      <td>
+        <form method="POST" action="{{ url_for('toggle_resident', resident_id=u.id) }}">
+          <button class="btn btn-outline btn-sm" type="submit">{{ 'Mark Inactive' if u.status=='active' else 'Reactivate' }}</button>
+        </form>
+      </td>
+    </tr>
+    {% endfor %}
+  </table></div>
+  {% else %}<div class="empty-state">No residents found.</div>{% endif %}
+</div>
+{% endblock %}

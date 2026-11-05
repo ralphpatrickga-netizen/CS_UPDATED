@@ -1,0 +1,109 @@
+{% extends "base.html" %}
+{% block title %}Review Clustered Issue — BarangayConnect{% endblock %}
+{% block page_title %}Review Clustered Issue{% endblock %}
+{% block content %}
+<div class="community-report-actions management-back-link">
+  <a class="btn btn-outline btn-sm" href="{{ management_url }}">← All Clustered Issues</a>
+</div>
+
+<section class="card community-issue-detail">
+  <div class="community-report-heading">
+    <div>
+      <h2>{{ issue.category }}</h2>
+      <p class="muted">{{ issue.location }}</p>
+    </div>
+    <span class="badge badge-{{ issue.status.replace(' ','.') }}">{{ issue.status }}</span>
+  </div>
+  <div class="management-issue-meta">
+    <span>{{ issue.resident_count }} residents · {{ issue.report_count }} individual reports</span>
+    <span>{{ issue.pending_verification }} report{{ 's' if issue.pending_verification != 1 }} awaiting verification</span>
+    <span>First reported {{ issue.created_at }}</span>
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head">
+    <div>
+      <h2>Verify Reports</h2>
+      <p class="muted">Review each resident's submission before marking it verified.</p>
+    </div>
+    {% if issue.pending_verification %}
+    <form method="POST" action="{{ url_for('verify_community_issue_reports', issue_id=issue.id) }}">
+      <button class="btn btn-primary btn-sm" type="submit">Verify All Pending</button>
+    </form>
+    {% endif %}
+  </div>
+  <div class="community-management-reports">
+    {% for report in reports %}
+    <article class="community-management-report">
+      <div class="community-management-report-heading">
+        <div>
+          <strong class="ref-code">{{ report.reference_no }}</strong>
+          <span class="muted">· {{ report.resident_name }} · {{ report.created_at }}</span>
+        </div>
+        {% if report.is_verified %}
+        <span class="badge badge-Resolved">Verified</span>
+        {% else %}
+        <span class="badge badge-Pending">Pending verification</span>
+        {% endif %}
+      </div>
+      <p>{{ report.description }}</p>
+      <div class="community-report-actions">
+        <span class="badge badge-{{ report.status.replace(' ','.') }}">{{ report.status }}</span>
+        <span class="badge priority-{{ report.priority }}">{{ report.priority }} priority</span>
+        <span class="muted">Reported location: {{ report.location or 'Not specified' }}</span>
+        <a class="btn btn-outline btn-sm" href="{{ url_for('view_complaint', complaint_id=report.id) }}">Open Concern</a>
+        {% if not report.is_verified %}
+        <form method="POST" action="{{ url_for('verify_community_issue_reports', issue_id=issue.id) }}">
+          <input type="hidden" name="report_id" value="{{ report.id }}">
+          <button class="btn btn-primary btn-sm" type="submit">Verify Report</button>
+        </form>
+        {% endif %}
+      </div>
+    </article>
+    {% endfor %}
+  </div>
+</section>
+
+<section class="card">
+  <div class="card-head">
+    <div>
+      <h2>Shared Status & Resident Notification</h2>
+      <p class="muted">Changing the status updates every linked concern and notifies all reporters and current followers.</p>
+    </div>
+  </div>
+  <form method="POST" action="{{ url_for('update_community_issue_status', issue_id=issue.id) }}" class="community-status-form">
+    <div class="filter-select">
+      <label for="community-status">Issue status</label>
+      <select id="community-status" name="status" required>
+        {% for status in statuses %}
+        <option value="{{ status }}" {{ 'selected' if issue.status == status else '' }}>{{ status }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div>
+      <label for="resident-message">Message to reporters and followers <span class="muted">(optional, max 500 characters)</span></label>
+      <textarea id="resident-message" name="resident_message" maxlength="500" rows="3" placeholder="Share an update residents should know about"></textarea>
+    </div>
+    <button class="btn btn-primary" type="submit">Save Status & Notify Residents</button>
+  </form>
+</section>
+
+<section class="card community-issue-updates">
+  <h2>Status & Update History</h2>
+  {% if updates %}
+  <ol class="timeline">
+    {% for update in updates %}
+    <li>
+      <strong>{{ update.status }}</strong>
+      {% if update.changed_by %}<span>by {{ update.changed_by }}</span>{% endif %}
+      <span class="muted">{{ update.created_at }}</span>
+      {% if update.message %}<p>{{ update.message }}</p>{% endif %}
+    </li>
+    {% endfor %}
+  </ol>
+  {% else %}
+  <p class="muted">No status history is available.</p>
+  {% endif %}
+</section>
+{% endblock %}

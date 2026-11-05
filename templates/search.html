@@ -1,0 +1,43 @@
+{% extends "base.html" %}
+{% block title %}Search — BarangayConnect{% endblock %}
+{% block content %}
+{% if q %}
+<div class="card">
+  <h3>Requests {% if req_rows %}({{ req_rows|length }}){% endif %}</h3>
+  {% if req_rows %}
+  <div class="table-wrap"><table>
+    <tr><th>Reference</th>{% if current_user.role!='resident' %}<th>Resident</th>{% endif %}<th>Type</th><th>Status</th><th></th></tr>
+    {% for r in req_rows %}
+    <tr>
+      <td class="ref-code">{{ r.reference_no }}</td>
+      {% if current_user.role!='resident' %}<td>{{ r.resident_name }}</td>{% endif %}
+      <td>{{ r.request_type }}</td>
+      <td><span class="badge badge-{{ r.status.replace(' ','.') }}">{{ r.status }}</span></td>
+      <td><a class="btn btn-outline btn-sm" href="{{ url_for('view_request', request_id=r.id) }}">View</a></td>
+    </tr>
+    {% endfor %}
+  </table></div>
+  {% else %}<div class="empty-state">No matching requests.</div>{% endif %}
+</div>
+
+<div class="card">
+  <h3>Complaints {% if comp_rows %}({{ comp_rows|length }}){% endif %}</h3>
+  {% if comp_rows %}
+  <div class="table-wrap"><table>
+    <tr><th>Reference</th>{% if current_user.role!='resident' %}<th>Resident</th>{% endif %}<th>Category</th><th>Status</th><th></th></tr>
+    {% for c in comp_rows %}
+    <tr>
+      <td class="ref-code">{{ c.reference_no }}</td>
+      {% if current_user.role!='resident' %}<td>{{ c.resident_name }}</td>{% endif %}
+      <td>{{ c.category }}</td>
+      <td><span class="badge badge-{{ c.status.replace(' ','.') }}">{{ c.status }}</span></td>
+      <td><a class="btn btn-outline btn-sm" href="{{ url_for('view_complaint', complaint_id=c.id) }}">View</a></td>
+    </tr>
+    {% endfor %}
+  </table></div>
+  {% else %}<div class="empty-state">No matching complaints.</div>{% endif %}
+</div>
+{% else %}
+<div class="empty-state">Type something above to search across requests and complaints.</div>
+{% endif %}
+{% endblock %}

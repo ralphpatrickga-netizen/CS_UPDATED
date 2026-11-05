@@ -1,0 +1,241 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{% block title %}BarangayConnect{% endblock %}</title>
+<link rel="stylesheet" href="{{ url_for('static', filename='css/style.css') }}">
+</head>
+<body class="{% if current_user %}has-shell{% else %}auth-body{% endif %}{% if current_user and current_user.role == 'resident' and request.endpoint == 'resident_dashboard' %} resident-dashboard-page{% endif %}">
+
+{% if current_user %}
+<div class="shell">
+  <input type="checkbox" id="nav-toggle" class="nav-toggle-input">
+  <aside class="sidebar">
+    <div class="brand">
+      <span class="brand-mark">BC</span>
+      <div class="brand-text">
+        <strong>BarangayConnect</strong>
+        <small>Citizen Service Portal</small>
+      </div>
+    </div>
+    <nav class="nav-menu">
+      {% if current_user.role == 'resident' %}
+        <a href="{{ url_for('resident_dashboard') }}" class="{{ 'active' if request.endpoint=='resident_dashboard' }}">Dashboard</a>
+        <a href="{{ url_for('new_request') }}" class="{{ 'active' if request.endpoint in ['new_request'] }}">New Request</a>
+        <a href="{{ url_for('my_requests') }}" class="{{ 'active' if request.endpoint in ['my_requests','view_request'] }}">My Requests</a>
+        <a href="{{ url_for('new_complaint') }}" class="{{ 'active' if request.endpoint=='new_complaint' }}">File Concern<span class="pill-badge" aria-label="{{ nav_daily_concerns_remaining }} concerns available" title="{{ nav_daily_concerns_remaining }} concerns available">{{ nav_daily_concerns_remaining }}</span></a>
+        <a href="{{ url_for('my_complaints') }}" class="{{ 'active' if request.endpoint in ['my_complaints','view_complaint'] }}">My Concerns</a>
+        <a href="{{ url_for('community_reports') }}" class="{{ 'active' if request.endpoint in ['community_reports','community_issue_detail'] }}">Community Reports</a>
+        <a href="{{ url_for('hotlines') }}" class="{{ 'active' if request.endpoint=='hotlines' }}">Emergency Hotlines</a>
+      {% elif current_user.role == 'staff' %}
+        <div class="nav-section-label">Overview</div>
+        <a href="{{ url_for('staff_dashboard') }}" class="{{ 'active' if request.endpoint=='staff_dashboard' }}"><span class="nav-icon" aria-hidden="true">▦</span>Dashboard</a>
+        <div class="nav-section-label">Services</div>
+        {% if nav_requests %}
+        <a href="{{ url_for('staff_requests') }}" class="{{ 'active' if request.endpoint in ['staff_requests','view_request'] }}"><span class="nav-icon" aria-hidden="true">▤</span>Requests{% if nav_new_requests %}<span class="pill-badge" aria-label="{{ nav_new_requests }} new requests" title="New requests">{{ nav_new_requests }}</span>{% endif %}</a>
+        {% endif %}
+        {% if nav_complaints %}
+        <a href="{{ url_for('staff_complaints') }}" class="{{ 'active' if request.endpoint in ['staff_complaints','view_complaint'] }}"><span class="nav-icon" aria-hidden="true">⚑</span>Concerns{% if nav_new_complaints %}<span class="pill-badge" aria-label="{{ nav_new_complaints }} new concerns" title="New concerns">{{ nav_new_complaints }}</span>{% endif %}</a>
+        <a href="{{ url_for('community_issue_management') }}" class="{{ 'active' if request.endpoint in ['community_issue_management','community_issue_management_detail'] }}"><span class="nav-icon" aria-hidden="true">◎</span>Clustered Issues</a>
+        {% endif %}
+        <div class="nav-section-label">People</div>
+        <a href="{{ url_for('view_residents') }}" class="{{ 'active' if request.endpoint=='view_residents' }}"><span class="nav-icon" aria-hidden="true">♙</span>Residents</a>
+      {% elif current_user.role == 'admin' %}
+        <div class="nav-section-label">Overview</div>
+        <a href="{{ url_for('admin_dashboard') }}" class="{{ 'active' if request.endpoint=='admin_dashboard' }}"><span class="nav-icon" aria-hidden="true">▦</span>Dashboard</a>
+        <div class="nav-section-label">People</div>
+        <a href="{{ url_for('admin_residents') }}" class="{{ 'active' if request.endpoint=='admin_residents' }}"><span class="nav-icon" aria-hidden="true">♙</span>Manage Residents</a>
+        <a href="{{ url_for('admin_staff') }}" class="{{ 'active' if request.endpoint=='admin_staff' }}"><span class="nav-icon" aria-hidden="true">♧</span>Manage Staff</a>
+        {% if current_user.is_super_admin %}
+        <a href="{{ url_for('admin_administrators') }}" class="{{ 'active' if request.endpoint=='admin_administrators' }}"><span class="nav-icon" aria-hidden="true">◇</span>Administrators</a>
+        {% endif %}
+        <div class="nav-section-label">Services</div>
+        <a href="{{ url_for('admin_requests') }}" class="{{ 'active' if request.endpoint in ['admin_requests','view_request'] }}"><span class="nav-icon" aria-hidden="true">▤</span>Requests{% if nav_new_requests %}<span class="pill-badge" aria-label="{{ nav_new_requests }} new requests" title="New requests">{{ nav_new_requests }}</span>{% endif %}</a>
+        <a href="{{ url_for('admin_complaints') }}" class="{{ 'active' if request.endpoint in ['admin_complaints','view_complaint'] }}"><span class="nav-icon" aria-hidden="true">⚑</span>Concerns{% if nav_new_complaints %}<span class="pill-badge" aria-label="{{ nav_new_complaints }} new concerns" title="New concerns">{{ nav_new_complaints }}</span>{% endif %}</a>
+        <a href="{{ url_for('community_issue_management') }}" class="{{ 'active' if request.endpoint in ['community_issue_management','community_issue_management_detail'] }}"><span class="nav-icon" aria-hidden="true">◎</span>Clustered Issues</a>
+        <a href="{{ url_for('admin_announcements') }}" class="{{ 'active' if request.endpoint=='admin_announcements' }}"><span class="nav-icon" aria-hidden="true">◈</span>Announcements</a>
+        <div class="nav-section-label">Insights</div>
+        <a href="{{ url_for('admin_reports') }}" class="{{ 'active' if request.endpoint=='admin_reports' }}"><span class="nav-icon" aria-hidden="true">▥</span>Reports</a>
+        <a href="{{ url_for('audit_logs') }}" class="{{ 'active' if request.endpoint=='audit_logs' }}"><span class="nav-icon" aria-hidden="true">◷</span>Audit Logs</a>
+      {% endif %}
+    </nav>
+    <a href="{{ url_for('logout') }}" class="logout-link">Logout</a>
+  </aside>
+
+  <div class="main-col">
+    <header class="topbar{% if current_user.role == 'resident' and request.endpoint == 'resident_dashboard' %} resident-dashboard-topbar{% endif %}">
+      <label for="nav-toggle" class="hamburger">☰</label>
+      {% if current_user.role == 'resident' and request.endpoint == 'resident_dashboard' %}
+      <a class="mobile-brand" href="{{ url_for('resident_dashboard') }}" aria-label="BarangayConnect Resident Portal">
+        <strong>BarangayConnect</strong>
+        <small>Resident Portal</small>
+      </a>
+      {% endif %}
+      <span class="welcome">Welcome, {{ current_user.full_name.split(' ')[0] }}</span>
+      <form class="topbar-search" method="GET" action="{{ url_for('search') }}">
+        <div class="search-control topbar-search-control">
+          <input type="text" name="q" value="{{ q or '' }}" aria-label="Search requests and complaints" placeholder="Search by reference no., name, category, or status" {% if request.endpoint == 'search' %}autofocus{% endif %}>
+          <button class="search-submit" type="submit" aria-label="Search" title="Search">
+            <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.6" stroke-linecap="round" aria-hidden="true"><circle cx="10.5" cy="10.5" r="6.5"/><line x1="15.5" y1="15.5" x2="21" y2="21"/></svg>
+          </button>
+        </div>
+      </form>
+      <div class="topbar-right">
+        <div class="topbar-actions">
+          <a href="{{ url_for('notifications') }}" class="topbar-icon-btn notification-btn" aria-label="Notifications" title="Notifications">
+            🔔
+            {% if unread_count %}<span class="icon-badge">{{ unread_count }}</span>{% endif %}
+          </a>
+          {% if current_user.role == 'admin' %}
+          <a href="{{ url_for('admin_settings') }}" class="topbar-icon-btn" aria-label="Settings" title="Settings">⚙</a>
+          {% endif %}
+          <a href="{{ url_for('profile') }}" class="avatar-link" aria-label="My Profile" title="My Profile">
+            <div class="avatar">
+              {% if current_user.profile_picture %}
+              <img src="{{ url_for('serve_upload', subdir='profiles', stored_name=current_user.profile_picture) }}" alt="Profile">
+              {% else %}
+              {{ current_user.full_name[0] }}
+              {% endif %}
+            </div>
+          </a>
+        </div>
+      </div>
+    </header>
+
+    <main class="content">
+      {% if request.endpoint != 'search' %}
+      <h1 class="page-title content-page-title">{% block page_title %}Dashboard{% endblock %}</h1>
+      {% endif %}
+      {% with messages = get_flashed_messages(with_categories=true) %}
+        {% if messages %}
+          <div class="flash-stack">
+          {% for category, message in messages %}
+            {% if category not in ['concern_success', 'duplicate_request_block', 'duplicate_concern_block'] %}
+            <div class="flash flash-{{ category }}">{{ message }}</div>
+            {% endif %}
+          {% endfor %}
+          </div>
+          {% for category, message in messages if category == 'concern_success' and current_user.role == 'resident' %}
+          {% set success_details = message.split('|') %}
+          <dialog class="concern-success-dialog" id="concern-success-dialog" aria-labelledby="concern-success-title">
+            <h2 id="concern-success-title">Concern Filed Successfully</h2>
+            <p>Complaint filed. Reference number: <strong>{{ success_details[0] }}</strong></p>
+            <p>You have <strong>{{ success_details[1] }}</strong> {{ 'concern' if success_details[1] == '1' else 'concerns' }} available.</p>
+            {% if success_details[1] == '0' %}
+            <p>Your 24-hour cooldown has started. A concern that is resolved by staff or an administrator can restore one available submission.</p>
+            {% endif %}
+            {% if success_details|length > 4 and success_details[2]|int > 1 %}
+            <div class="community-cluster-notice">
+              <strong>{{ success_details[2] }} residents have reported the same issue, including you.</strong>
+              <p>Current Status: <strong>{{ success_details[3] }}</strong></p>
+              <a class="btn btn-outline" href="{{ url_for('community_issue_detail', issue_id=success_details[4]) }}">View Community Report</a>
+            </div>
+            {% endif %}
+            <div class="concern-success-actions">
+              <a class="btn btn-primary" href="{{ url_for('my_complaints') }}">Go to My Concern to Track the Status</a>
+              <form method="dialog" data-redirect="{{ url_for('my_complaints') }}">
+                <button class="btn btn-outline" type="submit">Close</button>
+              </form>
+            </div>
+          </dialog>
+          {% endfor %}
+          {% for category, message in messages if category == 'duplicate_request_block' and current_user.role == 'resident' %}
+          <dialog class="concern-success-dialog" id="duplicate-request-dialog" aria-labelledby="duplicate-request-title">
+            <h2 id="duplicate-request-title">Existing Document Request</h2>
+            <p>{{ message }}</p>
+            <span class="badge badge-Under.Review">Request In Progress</span>
+            <div class="concern-success-actions">
+              <a class="btn btn-primary" href="{{ url_for('my_requests') }}">Go to My Request</a>
+              <form method="dialog" data-redirect="{{ url_for('my_requests') }}">
+                <button class="btn btn-outline" type="submit">Close</button>
+              </form>
+            </div>
+          </dialog>
+          {% endfor %}
+          {% for category, message in messages if category == 'duplicate_concern_block' and current_user.role == 'resident' %}
+          <dialog class="concern-success-dialog" id="duplicate-concern-dialog" aria-labelledby="duplicate-concern-title">
+            <h2 id="duplicate-concern-title">Active Concern Found</h2>
+            <p>{{ message }}</p>
+            <div class="concern-success-actions">
+              <a class="btn btn-primary" href="{{ url_for('my_complaints') }}">Go to My Concern</a>
+              <form method="dialog" data-redirect="{{ url_for('my_complaints') }}">
+                <button class="btn btn-outline" type="submit">Close</button>
+              </form>
+            </div>
+          </dialog>
+          {% endfor %}
+        {% endif %}
+      {% endwith %}
+      {% block content %}{% endblock %}
+    </main>
+  </div>
+</div>
+
+{% if current_user.role == 'resident' %}
+<div id="bc-widget"
+     data-message-url="{{ url_for('api_assistant_message') }}"
+     data-history-url="{{ url_for('api_assistant_history') }}">
+  <button id="bc-bubble" aria-label="Open assistant" title="Ask BarangayConnect">
+    <span id="bc-bubble-icon">🤖</span>
+  </button>
+  <div id="bc-panel">
+    <div id="bc-panel-head">
+      <div>
+        <strong>BarangayConnect Assistant</strong>
+        <div id="bc-panel-sub">Usually replies instantly</div>
+      </div>
+      <button id="bc-close" aria-label="Close">✕</button>
+    </div>
+    <div id="bc-log"></div>
+    <div id="bc-quick-replies"></div>
+    <form id="bc-form">
+      <input type="text" id="bc-input" autocomplete="off" placeholder="Type a message...">
+      <button type="submit" aria-label="Send">➤</button>
+    </form>
+  </div>
+</div>
+{% endif %}
+
+{% else %}
+  {% with messages = get_flashed_messages(with_categories=true) %}
+    {% if messages %}
+      <div class="flash-stack auth-flash">
+      {% for category, message in messages %}
+        <div class="flash flash-{{ category }}">{{ message }}</div>
+      {% endfor %}
+      </div>
+    {% endif %}
+  {% endwith %}
+  {% block auth_content %}{% endblock %}
+{% endif %}
+
+{% if current_user.role == 'resident' %}
+<script src="{{ url_for('static', filename='js/assistant-widget.js') }}"></script>
+{% endif %}
+{% if current_user and current_user.role == 'resident' %}
+<script>
+  const concernSuccessDialog = document.getElementById("concern-success-dialog");
+  if (concernSuccessDialog) concernSuccessDialog.showModal();
+  const duplicateRequestDialog = document.getElementById("duplicate-request-dialog");
+  if (duplicateRequestDialog) duplicateRequestDialog.showModal();
+  const duplicateConcernDialog = document.getElementById("duplicate-concern-dialog");
+  if (duplicateConcernDialog) duplicateConcernDialog.showModal();
+
+  document.querySelectorAll('.concern-success-dialog form[data-redirect]').forEach((form) => {
+    form.addEventListener('submit', (event) => {
+      event.preventDefault();
+      const redirectUrl = form.dataset.redirect;
+      const dialog = form.closest('dialog');
+      if (dialog && typeof dialog.close === 'function') {
+        dialog.close();
+      }
+      if (redirectUrl) {
+        window.location.href = redirectUrl;
+      }
+    });
+  });
+</script>
+{% endif %}
+</body>
+</html>

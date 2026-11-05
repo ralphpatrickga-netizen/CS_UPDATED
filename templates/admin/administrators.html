@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}Administrators — BarangayConnect{% endblock %}
+{% block page_title %}Manage Administrators{% endblock %}
+{% block content %}
+{% if current_user.is_super_admin %}
+<div class="card" style="max-width:640px;">
+  <h3>Create Administrator Account</h3>
+  <p class="muted">Admin accounts have full system access. A recovery email and a stronger password are required.</p>
+  <form method="POST" class="form-grid">
+    <div class="form-row two">
+      <div class="form-row"><label>Full name</label><input type="text" name="full_name" required></div>
+      <div class="form-row"><label>Email</label><input type="email" name="email" required></div>
+    </div>
+    <div class="form-row">
+      <label>Philippine mobile number (optional for now)</label>
+      <input type="tel" name="contact_number" placeholder="0917 123 4567">
+    </div>
+    <div class="form-row"><label>Recovery email</label><input type="email" name="recovery_email" required></div>
+    <div class="form-row"><label>Password</label><input type="password" name="password" required>
+      <span class="hint">Min. 8 characters, with a letter and a number.</span>
+    </div>
+    <button class="btn btn-primary" type="submit">Create Administrator</button>
+  </form>
+</div>
+{% else %}
+<div class="card" style="max-width:640px;">
+  <h3>Create Administrator Account</h3>
+  <p class="muted">Only the founding Administrator account can create additional Administrators. This keeps a single accountable owner for the system's highest-privilege role — ask them if a new admin account is needed.</p>
+</div>
+{% endif %}
+
+<div class="card">
+  <h3>Administrator Accounts</h3>
+  <div class="table-wrap"><table>
+    <tr><th>Name</th><th>Email</th><th>Mobile number</th><th>Role</th><th>Created</th></tr>
+    {% for u in rows %}
+    <tr>
+      <td>{{ u.full_name }}</td><td>{{ u.email }}</td>
+      <td>
+        <form method="POST" action="{{ url_for('update_account_mobile', account_id=u.id) }}" style="display:flex; gap:6px; align-items:center;">
+          <input type="tel" name="contact_number" value="{{ u.contact_number or '' }}" aria-label="Mobile number for {{ u.full_name }}" placeholder="0917 123 4567" required>
+          <button class="btn btn-outline btn-sm" type="submit">Save</button>
+        </form>
+      </td>
+      <td>{% if u.is_super_admin %}<span class="badge badge-Approved">Founding Admin</span>{% else %}<span class="tag">Administrator</span>{% endif %}</td>
+      <td class="muted">{{ u.created_at }}</td>
+    </tr>
+    {% endfor %}
+  </table></div>
+</div>
+{% endblock %}

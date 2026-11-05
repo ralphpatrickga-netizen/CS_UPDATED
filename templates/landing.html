@@ -1,0 +1,308 @@
+<!DOCTYPE html>
+<html lang="en" class="no-js">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>{{ barangay_name }} · BarangayConnect</title>
+<meta name="description" content="Request barangay clearance, indigency and residency certificates, file complaints, and track every request online with {{ barangay_name }}.">
+<meta name="theme-color" content="#0F2340">
+<link rel="icon" type="image/png" href="{{ url_for('static', filename='images/barangay-seal.png') }}">
+<link rel="stylesheet" href="{{ url_for('static', filename='css/landing.css') }}">
+<script>document.documentElement.className = 'js';</script>
+</head>
+<body>
+
+<div class="lp-progress" aria-hidden="true"><span id="lp-progress-bar"></span></div>
+
+<!-- ============================================================ NAV -->
+<header class="lp-nav" id="lp-nav">
+  <div class="lp-wrap lp-nav-inner">
+    <a href="#top" class="lp-brand" aria-label="BarangayConnect home">
+      <img src="{{ url_for('static', filename='images/barangay-seal.png') }}" alt="" width="38" height="38">
+      <span>
+        <strong>BarangayConnect</strong>
+        <small>{{ barangay_name }}</small>
+      </span>
+    </a>
+
+    <nav class="lp-links" id="lp-links" aria-label="Sections">
+      <a href="#services">Services</a>
+      <a href="#how">How it works</a>
+      <a href="#offices">Offices</a>
+      <a href="#concerns">Concerns</a>
+      <a href="#help">Contact</a>
+      <a href="{{ url_for('login') }}" class="lp-link-cta">Log in</a>
+      <a href="{{ url_for('register') }}" class="lp-link-cta lp-link-strong">Create account</a>
+    </nav>
+
+    <div class="lp-nav-cta">
+      <a href="{{ url_for('login') }}" class="lp-btn lp-btn-ghost">Log in</a>
+      <a href="{{ url_for('register') }}" class="lp-btn lp-btn-solid">Create account</a>
+    </div>
+
+    <button class="lp-burger" id="lp-burger" aria-label="Open menu" aria-expanded="false" aria-controls="lp-links">
+      <span></span><span></span><span></span>
+    </button>
+  </div>
+</header>
+
+{% with messages = get_flashed_messages(with_categories=true) %}
+  {% if messages %}
+  <div class="lp-flash-wrap" role="status">
+    {% for category, message in messages %}
+    <div class="lp-flash lp-flash-{{ category }}">{{ message }}</div>
+    {% endfor %}
+  </div>
+  {% endif %}
+{% endwith %}
+
+<main id="top">
+
+<!-- ============================================================ HERO -->
+<section class="lp-hero" id="hero">
+  <div class="lp-hero-glow" aria-hidden="true"></div>
+  <div class="lp-wrap lp-hero-grid">
+
+    <div class="lp-hero-copy">
+      <p class="lp-hero-tag"><span class="lp-dot"></span> Online service portal of {{ barangay_name }}</p>
+      <h1>
+        <span class="lp-line"><span>Get your barangay</span></span>
+        <span class="lp-line"><span>documents without</span></span>
+        <span class="lp-line"><span>falling in line.</span></span>
+      </h1>
+      <p class="lp-hero-sub">
+        Apply for a clearance or certificate, file a complaint, and follow every step from your phone.
+        You get a notification each time your request moves.
+      </p>
+      <div class="lp-hero-actions">
+        <a href="{{ url_for('register') }}" class="lp-btn lp-btn-cyan lp-btn-lg">Create a free account</a>
+        <a href="{{ url_for('login') }}" class="lp-btn lp-btn-outline lp-btn-lg">I already have an account</a>
+      </div>
+      <p class="lp-hero-note">For registered residents. Staff and administrators log in from the same page.</p>
+    </div>
+
+    <!-- Live tracker: the one orchestrated moment on the page -->
+    <div class="lp-tracker" id="lp-tracker" aria-label="Example of a request being tracked">
+      <div class="lp-tracker-head">
+        <div>
+          <small>Certificate of Residency</small>
+          <strong class="lp-ref">REQ-{{ year }}-4F2A1</strong>
+        </div>
+        <span class="lp-status" id="lp-status" data-state="0">Submitted</span>
+      </div>
+
+      <ol class="lp-steps" id="lp-steps">
+        <li data-i="0"><span class="lp-node"></span><div><b>Submitted</b><em>Your form and valid ID are received</em></div></li>
+        <li data-i="1"><span class="lp-node"></span><div><b>Under Review</b><em>The Secretary checks your details</em></div></li>
+        <li data-i="2"><span class="lp-node"></span><div><b>Processing</b><em>Your certificate is being prepared</em></div></li>
+        <li data-i="3"><span class="lp-node"></span><div><b>Approved</b><em>Claim slip is ready to view</em></div></li>
+        <li data-i="4"><span class="lp-node"></span><div><b>Completed</b><em>Document claimed at the barangay hall</em></div></li>
+      </ol>
+
+      <div class="lp-toast" id="lp-toast" role="status" aria-live="polite">
+        <span class="lp-toast-ic" aria-hidden="true">🔔</span>
+        <span id="lp-toast-text">Your request is now Submitted.</span>
+      </div>
+    </div>
+
+  </div>
+
+  <a href="#services" class="lp-scroll-hint" aria-label="Scroll to services">
+    <span>Scroll</span><i></i>
+  </a>
+</section>
+
+<!-- ============================================================ SERVICES -->
+<section class="lp-section" id="services">
+  <div class="lp-wrap lp-split">
+    <div class="lp-split-head lp-sticky" data-reveal="left">
+      <h2>Four things you can now do from home.</h2>
+      <p>Each one is a form you fill in once. The barangay office in charge receives it directly.</p>
+      <a href="{{ url_for('register') }}" class="lp-btn lp-btn-solid">Start with an account</a>
+    </div>
+
+    <div class="lp-list" data-stagger>
+      <article class="lp-row">
+        <span class="lp-row-ic lp-ic-cyan" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="m9 15 2 2 4-4"/></svg>
+        </span>
+        <div>
+          <h3>Barangay Clearance</h3>
+          <p>Choose your purpose and see the fee before you submit. Handled by the Barangay Treasurer.</p>
+        </div>
+      </article>
+
+      <article class="lp-row">
+        <span class="lp-row-ic lp-ic-amber" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/><path d="M9 13h6M9 17h4"/></svg>
+        </span>
+        <div>
+          <h3>Certificate of Indigency</h3>
+          <p>Pick a purpose, attach what is required, and request the number of copies you need. Handled by the Barangay Secretary.</p>
+        </div>
+      </article>
+
+      <article class="lp-row">
+        <span class="lp-row-ic lp-ic-green" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M3 11 12 4l9 7"/><path d="M5 10v10h14V10"/><path d="M10 20v-5h4v5"/></svg>
+        </span>
+        <div>
+          <h3>Certificate of Residency</h3>
+          <p>Proof that you live in the barangay. Your address is filled in from your profile. Handled by the Barangay Secretary.</p>
+        </div>
+      </article>
+
+      <article class="lp-row" id="concerns">
+        <span class="lp-row-ic lp-ic-red" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="26" height="26" fill="none" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3 2.5 20h19z"/><path d="M12 10v4"/><path d="M12 17.5v.01"/></svg>
+        </span>
+        <div>
+          <h3>File a complaint</h3>
+          <p>Describe what happened, add the location, and attach photos or video. The BPSO receives it and you can follow the status.</p>
+        </div>
+      </article>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ HOW IT WORKS -->
+<section class="lp-section lp-section-tint" id="how">
+  <div class="lp-wrap">
+    <div class="lp-center-head" data-reveal="up">
+      <h2>From sign-up to claiming, in four steps.</h2>
+      <p>No visits to ask where your paper is. The status is always on your dashboard.</p>
+    </div>
+
+    <ol class="lp-timeline" id="lp-timeline">
+      <span class="lp-timeline-line" aria-hidden="true"><i id="lp-timeline-fill"></i></span>
+
+      <li class="lp-tl-item" data-reveal="side">
+        <span class="lp-tl-n">1</span>
+        <div>
+          <h3>Create your resident account</h3>
+          <p>Register with your name, address and contact number. Your address is saved so you do not retype it on every form.</p>
+        </div>
+      </li>
+      <li class="lp-tl-item" data-reveal="side">
+        <span class="lp-tl-n">2</span>
+        <div>
+          <h3>Submit a request with a valid ID</h3>
+          <p>Fill in the form and upload a photo or PDF of your ID. Someone else claiming for you? Add their details and your authorization letter.</p>
+        </div>
+      </li>
+      <li class="lp-tl-item" data-reveal="side">
+        <span class="lp-tl-n">3</span>
+        <div>
+          <h3>Follow it from your dashboard</h3>
+          <p>Every status change comes with a notification and the staff's remarks. Paste a reference number into the assistant to check it instantly.</p>
+        </div>
+      </li>
+      <li class="lp-tl-item" data-reveal="side">
+        <span class="lp-tl-n">4</span>
+        <div>
+          <h3>Claim it with your slip</h3>
+          <p>Once approved, open your claim slip. It tells you where to pay and where to pick up your document.</p>
+        </div>
+      </li>
+    </ol>
+  </div>
+</section>
+
+<!-- ============================================================ OFFICES -->
+<section class="lp-section" id="offices">
+  <div class="lp-wrap">
+    <div class="lp-center-head" data-reveal="up">
+      <h2>Your request goes straight to the right office.</h2>
+      <p>Each office only sees the work that belongs to it, so your details stay with the people who need them.</p>
+    </div>
+
+    <div class="lp-offices" data-stagger>
+      <div class="lp-office">
+        <div class="lp-office-top">
+          <h3>Barangay Treasurer</h3>
+          <span class="lp-chip">Clearances and fees</span>
+        </div>
+        <ul>
+          <li>Barangay Clearance</li>
+        </ul>
+      </div>
+      <div class="lp-office">
+        <div class="lp-office-top">
+          <h3>Barangay Secretary</h3>
+          <span class="lp-chip">Certificates</span>
+        </div>
+        <ul>
+          <li>Certificate of Indigency</li>
+          <li>Certificate of Residency</li>
+        </ul>
+      </div>
+      <div class="lp-office">
+        <div class="lp-office-top">
+          <h3>BPSO</h3>
+          <span class="lp-chip">Public safety</span>
+        </div>
+        <ul>
+          <li>Complaints and incident reports</li>
+        </ul>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ HELP -->
+<section class="lp-section lp-section-tint" id="help">
+  <div class="lp-wrap lp-split lp-split-help">
+    <div data-reveal="left">
+      <h2>Need help or want to visit?</h2>
+      <p>Residents can also use the built-in assistant after logging in. It answers document requirements and checks the status of a request from its reference number.</p>
+    </div>
+
+    <div class="lp-contact" data-stagger>
+      <div class="lp-contact-row lp-contact-emergency">
+        <span>Emergency</span>
+        <strong>911</strong>
+      </div>
+      {% if barangay_main_number %}
+      <div class="lp-contact-row">
+        <span>Barangay hall</span>
+        <strong>{{ barangay_main_number }}</strong>
+      </div>
+      {% endif %}
+      {% if barangay_address %}
+      <div class="lp-contact-row">
+        <span>Address</span>
+        <strong>{{ barangay_address }}</strong>
+      </div>
+      {% endif %}
+      <div class="lp-contact-row">
+        <span>More hotlines</span>
+        <strong><a href="{{ url_for('login') }}">Log in to see the full list</a></strong>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ============================================================ FINAL CTA -->
+<section class="lp-final">
+  <div class="lp-wrap lp-final-inner" data-reveal="up">
+    <img src="{{ url_for('static', filename='images/barangay-seal.png') }}" alt="Seal of {{ barangay_name }}" width="84" height="88">
+    <h2>Your next barangay document can start tonight.</h2>
+    <div class="lp-hero-actions lp-center">
+      <a href="{{ url_for('register') }}" class="lp-btn lp-btn-cyan lp-btn-lg">Create a free account</a>
+      <a href="{{ url_for('login') }}" class="lp-btn lp-btn-outline lp-btn-lg">Log in</a>
+    </div>
+  </div>
+</section>
+
+</main>
+
+<footer class="lp-footer">
+  <div class="lp-wrap lp-footer-inner">
+    <span>© {{ year }} {{ barangay_name }} · BarangayConnect</span>
+    <a href="#top" class="lp-totop">Back to top</a>
+  </div>
+</footer>
+
+<script src="{{ url_for('static', filename='js/landing.js') }}" defer></script>
+</body>
+</html>

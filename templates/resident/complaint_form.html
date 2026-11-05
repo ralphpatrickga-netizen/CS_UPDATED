@@ -1,0 +1,51 @@
+{% extends "base.html" %}
+{% block title %}File a Complaint — BarangayConnect{% endblock %}
+{% block page_title %}File a Complaint{% endblock %}
+{% block content %}
+<div class="card" style="max-width:640px;">
+  {% if daily_limit_reached %}
+  <div class="flash flash-error" style="margin-bottom:16px;">
+    You have used all {{ daily_limit }} available concern submissions. A 24-hour cooldown is active.
+  </div>
+  <p class="concern-reset-countdown" role="timer" data-countdown-seconds="{{ reset_seconds }}">
+    Cooldown ends in <strong class="countdown-value">{{ reset_seconds // 3600 }}h {{ (reset_seconds % 3600) // 60 }}m {{ reset_seconds % 60 }}s</strong>.
+  </p>
+  <a class="btn btn-outline" href="{{ url_for('my_complaints') }}">View My Concerns</a>
+  {% else %}
+  <div class="flash flash-info" style="margin-bottom:16px;">
+    You have {{ daily_remaining }} of {{ daily_limit }} concern submissions available.
+  </div>
+  <form id="complaint-form" method="POST" enctype="multipart/form-data" class="form-grid">
+    <div class="form-row">
+      <label>Category</label>
+      <select name="category" required>
+        <option value="" disabled {{ 'selected' if not form.get('category') }}>Select a category</option>
+        {% for c in categories %}
+        <option value="{{ c }}" {{ 'selected' if form.get('category')==c }}>{{ c }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="form-row">
+      <label>Location</label>
+      <input type="text" name="location" required value="{{ form.get('location','') }}" placeholder="Purok / Street where this occurred">
+    </div>
+    <div class="form-row">
+      <label>Description</label>
+      <textarea name="description" required placeholder="Describe what happened, when, and who was involved">{{ form.get('description','') }}</textarea>
+    </div>
+    <div class="form-row">
+      <label>Supporting evidence (optional)</label>
+      <input type="file" name="attachments" multiple accept=".jpg,.jpeg,.png,.webp,.pdf,.mp4,.mov,.webm,.avi,.m4v" data-preview-for="attachments-preview">
+      <span class="hint">JPG, PNG, WEBP, PDF, MP4, MOV, WEBM, AVI, or M4V. Max 5MB per file, up to 5 files, and 100MB total.</span>
+      <div id="attachments-preview" class="form-attachment-preview"></div>
+    </div>
+    <div class="actions-row">
+      <button class="btn btn-primary" type="submit">File Complaint</button>
+      <a class="btn btn-outline" href="{{ url_for('resident_dashboard') }}">Cancel</a>
+    </div>
+  </form>
+  {% endif %}
+</div>
+<script src="{{ url_for('static', filename='js/file-preview.js') }}"></script>
+<script src="{{ url_for('static', filename='js/concern-countdown.js') }}"></script>
+{% endblock %}

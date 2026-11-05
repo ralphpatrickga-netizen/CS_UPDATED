@@ -1,0 +1,70 @@
+{% extends "base.html" %}
+{% block title %}Verify Code — BarangayConnect{% endblock %}
+{% block auth_content %}
+<div class="auth-wrap">
+  <div class="auth-card">
+    <div class="auth-logo">
+      <span class="brand-mark">BC</span>
+      <div><strong style="font-family:var(--font-display); color:var(--navy)">BarangayConnect</strong></div>
+    </div>
+    <h1>Two-step verification</h1>
+    {% if session.get('pending_mfa_bootstrap') %}
+    <p class="auth-sub">Verify your email first, then set up the Founding Admin mobile number.</p>
+    {% elif otp_sms_required %}
+    <p class="auth-sub">Enter both codes sent to your registered email and mobile number{% if otp_phone %} ending in {{ otp_phone }}{% endif %}.</p>
+    {% else %}
+    <p class="auth-sub">Enter the six-digit code sent to your registered email address.</p>
+    {% endif %}
+    <p class="concern-reset-countdown" role="timer" data-countdown-seconds="{{ otp_expires_in }}">
+      Code expires in <strong class="countdown-value">{{ otp_expires_in // 60 }}m {{ otp_expires_in % 60 }}s</strong>.
+    </p>
+    <form method="POST" class="form-grid">
+      <div class="form-row">
+        <label for="email-otp">Email verification code</label>
+        <input class="otp-input" id="email-otp" type="text" name="email_otp" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required autofocus placeholder="000000" autocomplete="one-time-code">
+      </div>
+      {% if otp_sms_required and not session.get('pending_mfa_bootstrap') %}
+      <div class="form-row">
+        <label for="sms-otp">SMS verification code</label>
+        <input class="otp-input" id="sms-otp" type="text" name="sms_otp" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required placeholder="000000" autocomplete="one-time-code">
+      </div>
+      {% endif %}
+      <button class="btn btn-primary btn-block" type="submit">Verify &amp; Continue</button>
+    </form>
+    <form method="POST" action="{{ url_for('resend_admin_otp') }}" class="form-grid" style="margin-top:12px;">
+      <button class="btn btn-outline btn-block" id="resend-code" type="submit" {% if otp_resend_wait > 0 %}disabled{% endif %}>
+        {{ 'Resend Verification Codes' if otp_sms_required else 'Resend Code' }}
+      </button>
+      <small class="muted" id="resend-countdown" data-countdown-seconds="{{ otp_resend_wait }}">
+        {% if otp_resend_wait > 0 %}You can request another code in {{ otp_resend_wait }} seconds.{% endif %}
+      </small>
+    </form>
+    <div class="auth-foot"><a href="{{ url_for('login') }}">Cancel and return to login</a></div>
+  </div>
+</div>
+<script>
+  (function () {
+    const timer = document.querySelector(".concern-reset-countdown");
+    const value = timer && timer.querySelector(".countdown-value");
+    const resend = document.getElementById("resend-code");
+    const resendTimer = document.getElementById("resend-countdown");
+    if (!timer || !value || !resend || !resendTimer) return;
+
+    let expires = Number(timer.dataset.countdownSeconds);
+    let wait = Number(resendTimer.dataset.countdownSeconds);
+    function update() {
+      expires = Math.max(0, expires - 1);
+      wait = Math.max(0, wait - 1);
+      value.textContent = expires
+        ? Math.floor(expires / 60) + "m " + (expires % 60) + "s"
+        : "Expired";
+      resend.disabled = wait > 0;
+      resendTimer.textContent = wait
+        ? "You can request another code in " + wait + " seconds."
+        : "";
+      if (expires === 0 && wait === 0) window.clearInterval(interval);
+    }
+    const interval = window.setInterval(update, 1000);
+  })();
+</script>
+{% endblock %}

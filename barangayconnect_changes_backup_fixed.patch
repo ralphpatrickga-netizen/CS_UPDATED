@@ -1,0 +1,1096 @@
+diff --git a/.env.example b/.env.example
+index 9a7b9ca..f59d079 100644
+--- a/.env.example
++++ b/.env.example
+@@ -1,6 +1,13 @@
+ # Set these values in your process environment; do not commit real credentials.
+ SECRET_KEY=replace-with-a-long-random-secret
+ 
++# Supply these in the process environment for local setup; never commit real values.
++FOUNDING_ADMIN_NAME=
++FOUNDING_ADMIN_PASSWORD=
++DEMO_ADMIN_PASSWORD=
++DEMO_STAFF_PASSWORD=
++DEMO_RESIDENT_PASSWORD=
++
+ SMTP_HOST=smtp.example.com
+ SMTP_PORT=587
+ SMTP_USERNAME=your-smtp-username
+diff --git a/README.md b/README.md
+index 10b1a4d..55f1d09 100644
+--- a/README.md
++++ b/README.md
+@@ -198,10 +198,24 @@ source venv/bin/activate        # Windows: venv\Scripts\activate
+ # 3. Install dependencies
+ pip install -r requirements.txt
+ 
+-# 4. Build the database and load demo data + test accounts
++# 4. (Optional, for a fresh demo database only) set demo passwords without
++#    putting them in shell history, then seed demo data. seed.py resets the DB.
++#    Do NOT run seed.py on a database whose users/data you need to preserve.
++$env:DEMO_ADMIN_PASSWORD = [Net.NetworkCredential]::new("", (Read-Host -AsSecureString "Demo admin password")).Password
++$env:DEMO_STAFF_PASSWORD = [Net.NetworkCredential]::new("", (Read-Host -AsSecureString "Demo staff password")).Password
++$env:DEMO_RESIDENT_PASSWORD = [Net.NetworkCredential]::new("", (Read-Host -AsSecureString "Demo resident password")).Password
+ python3 seed.py
+-
+-# 5. Set email environment variables before running the app. Copy the
++$env:FOUNDING_ADMIN_NAME = "Ralph Patrick Ga"
++$env:FOUNDING_ADMIN_PASSWORD = [Net.NetworkCredential]::new("", (Read-Host -AsSecureString "Founding Admin initial password")).Password
++python3 setup_founding_admin.py
++Remove-Item Env:DEMO_ADMIN_PASSWORD, Env:DEMO_STAFF_PASSWORD, Env:DEMO_RESIDENT_PASSWORD, Env:FOUNDING_ADMIN_PASSWORD
++
++# 5. For an existing database, skip seed.py. Set only FOUNDING_ADMIN_NAME and
++#    FOUNDING_ADMIN_PASSWORD above and run setup_founding_admin.py. The setup
++#    updates the existing Founding Admin row in place and refuses ambiguous
++#    accounts or an email already owned by someone else.
++#
++# 6. Set email environment variables before running the app. Copy the
+ #    placeholders in .env.example into your shell or deployment environment.
+ #    Do not commit real SMTP credentials.
+ #
+@@ -216,33 +230,45 @@ python3 seed.py
+ #
+ #    Configure optional expiration/resend settings from .env.example as needed.
+ 
+-# 6. (Optional) enable Claude-powered answers in the Resident Assistant for
++# 7. (Optional) enable Claude-powered answers in the Resident Assistant for
+ #    open-ended questions. Skip this ΓÇö the assistant works fine without it.
+ export ANTHROPIC_API_KEY="sk-ant-..."      # Windows: set ANTHROPIC_API_KEY=sk-ant-...
+ 
+-# 7. Run the app
++# 8. Run the app
+ python3 app.py
+ ```
+ 
+ Open **http://127.0.0.1:5000** in your browser.
+ 
+-Re-run `python3 seed.py` any time to wipe and reset the database back to a clean
+-demo state.
++`setup_founding_admin.py` always uses `ralphpatrickga@gmail.com` for the
++Founding Admin login and recovery email. It hashes the administrator-supplied
++initial password, requires a change after email-OTP verification, and records
++the setup in the audit log. The Founding Admin email is also the address used
++for login and admin email OTP. Admin password recovery is sent to the stored
++recovery email; after setup, that is the Founding Admin email.
++
++`seed.py` is destructive demo tooling: it deletes and rebuilds the local
++database. Use it only when you intentionally want to discard all current data.
++The seeded demo admin is a regular Administrator, not the Founding Admin.
+ 
+ To fill in your own barangay's contact numbers on the Emergency Hotlines page,
+ log in as an Admin and go to Settings ΓÇö no code editing needed.
+ 
+ ## Test accounts
+ 
+-| Role     | Email                             | Password       | Notes |
+-|----------|------------------------------------|----------------|-------|
+-| Admin    | admin@barangayconnect.ph          | Admin@1234     | Login requires an OTP delivered to the registered email. SMTP must be configured.
+-Staff ΓÇö    marco.staff@barangayconnect.ph	       Staff@1234        Treasurer
+-Staff ΓÇö    ramon.staff@barangayconnect.ph	       Staff@1234        Secretary
+-Staff ΓÇö  	liza.staff@barangayconnect.ph          Staff@1234        BPSO
+-Resident	juan.resident@example.com	             Resident@1234
+-Resident	maria.resident@example.com	           Resident@1234
+-Resident	pedro.resident@example.com	           Resident@1234
++| Role     | Email                             | Password source | Notes |
++|----------|------------------------------------|-----------------|-------|
++| Admin    | admin@barangayconnect.ph          | `DEMO_ADMIN_PASSWORD` | Regular Admin; login requires email OTP. SMTP must be configured. |
++| Staff    | marco.staff@barangayconnect.ph    | `DEMO_STAFF_PASSWORD` | Treasurer |
++| Staff    | ramon.staff@barangayconnect.ph    | `DEMO_STAFF_PASSWORD` | Secretary |
++| Staff    | liza.staff@barangayconnect.ph     | `DEMO_STAFF_PASSWORD` | BPSO |
++| Resident | juan.resident@example.com         | `DEMO_RESIDENT_PASSWORD` | |
++| Resident | maria.resident@example.com        | `DEMO_RESIDENT_PASSWORD` | |
++| Resident | pedro.resident@example.com         | `DEMO_RESIDENT_PASSWORD` | |
++
++The demo passwords are supplied as environment variables and are not printed.
++The Founding Admin is `ralphpatrickga@gmail.com`; configure its initial password
++with `FOUNDING_ADMIN_PASSWORD` and change it after first OTP-verified login.
+ 
+ 
+ You can also register a brand-new resident account from the login page ΓÇö staff and
+diff --git a/app.py b/app.py
+index bbd01ae..9cdcf0e 100644
+--- a/app.py
++++ b/app.py
+@@ -1008,7 +1008,8 @@ def verify_otp():
+             flash("Incorrect verification code.", "error")
+             return redirect(url_for("verify_otp"))
+         admin = conn.execute(
+-            "SELECT id FROM users WHERE id=? AND role='admin' AND status='active'",
++            "SELECT id, must_reset_pw FROM users "
++            "WHERE id=? AND role='admin' AND status='active'",
+             (user_id,),
+         ).fetchone()
+         if not admin:
+@@ -1028,6 +1029,9 @@ def verify_otp():
+         conn.commit()
+         conn.close()
+         session.pop("pending_mfa_user", None)
++        if admin["must_reset_pw"]:
++            session["pending_reset_user"] = user_id
++            return redirect(url_for("first_login_reset"))
+         session["user_id"] = user_id
+         session["role"] = "admin"
+         return redirect(url_for("admin_dashboard"))
+@@ -1070,7 +1074,18 @@ def resend_admin_otp():
+ 
+ @app.route("/first-login-reset", methods=["GET", "POST"])
+ def first_login_reset():
+-    if "pending_reset_user" not in session:
++    user_id = session.get("pending_reset_user")
++    if not user_id:
++        return redirect(url_for("login"))
++    conn = dbh.get_db()
++    user = conn.execute(
++        "SELECT * FROM users WHERE id=? AND role IN ('staff','admin') "
++        "AND status='active' AND must_reset_pw=1",
++        (user_id,),
++    ).fetchone()
++    conn.close()
++    if not user:
++        session.pop("pending_reset_user", None)
+         return redirect(url_for("login"))
+     if request.method == "POST":
+         password = request.form.get("password", "")
+@@ -1082,19 +1097,29 @@ def first_login_reset():
+             flash("Passwords do not match.", "error")
+             return render_template("first_login_reset.html")
+         conn = dbh.get_db()
+-        uid = session.pop("pending_reset_user")
++        conn.execute("BEGIN IMMEDIATE")
++        user = conn.execute(
++            "SELECT * FROM users WHERE id=? AND role IN ('staff','admin') "
++            "AND status='active' AND must_reset_pw=1",
++            (user_id,),
++        ).fetchone()
++        if not user:
++            conn.rollback()
++            conn.close()
++            session.pop("pending_reset_user", None)
++            return redirect(url_for("login"))
+         conn.execute(
+             "UPDATE users SET password_hash=?, must_reset_pw=0 WHERE id=?",
+-            (generate_password_hash(password), uid),
++            (generate_password_hash(password), user_id),
+         )
+-        user = conn.execute("SELECT * FROM users WHERE id=?", (uid,)).fetchone()
+-        dbh.log_action(conn, user, "Staff set permanent password on first login")
++        dbh.log_action(conn, user, "Changed initial password on first login")
+         conn.commit()
+         conn.close()
+-        session["user_id"] = uid
+-        session["role"] = "staff"
++        session.pop("pending_reset_user", None)
++        session["user_id"] = user_id
++        session["role"] = user["role"]
+         flash("Password set. Welcome to BarangayConnect.", "success")
+-        return redirect(url_for("staff_dashboard"))
++        return redirect(url_for(f"{user['role']}_dashboard"))
+     return render_template("first_login_reset.html")
+ 
+ 
+@@ -1108,7 +1133,8 @@ def forgot_password():
+         conn = dbh.get_db()
+         conn.execute("BEGIN IMMEDIATE")
+         user = conn.execute(
+-            "SELECT * FROM users WHERE email=? AND role='resident' AND status='active'",
++            "SELECT * FROM users WHERE email=? AND role IN ('resident','admin') "
++            "AND status='active'",
+             (email,),
+         ).fetchone()
+         if user:
+@@ -1167,7 +1193,7 @@ def forgot_password():
+         if user:
+             try:
+                 email_service.send_email(
+-                    user["email"],
++                    user["recovery_email"] or user["email"],
+                     "Your BarangayConnect password reset code",
+                     "Enter this code on the BarangayConnect password reset page to choose a new password:\n\n"
+                     f"{code}\n\nThis code expires in "
+@@ -1222,7 +1248,8 @@ def reset_password_code():
+         conn = dbh.get_db()
+         conn.execute("BEGIN IMMEDIATE")
+         user = conn.execute(
+-            "SELECT * FROM users WHERE email=? AND role='resident' AND status='active'",
++            "SELECT * FROM users WHERE email=? AND role IN ('resident','admin') "
++            "AND status='active'",
+             (email,),
+         ).fetchone()
+         reset = conn.execute(
+@@ -2720,9 +2747,16 @@ def admin_administrators(user):
+             flash("An account with this email already exists.", "error")
+         else:
+             conn.execute(
+-                "INSERT INTO users (full_name, email, password_hash, role, address, created_by) "
++                "INSERT INTO users (full_name, email, recovery_email, password_hash, role, created_by) "
+                 "VALUES (?,?,?,?,?,?)",
+-                (full_name, email, generate_password_hash(password), "admin", f"recovery:{recovery_email}", user["id"]),
++                (
++                    full_name,
++                    email,
++                    recovery_email,
++                    generate_password_hash(password),
++                    "admin",
++                    user["id"],
++                ),
+             )
+             dbh.log_action(conn, user, "Created additional administrator account", target=email)
+             conn.commit()
+@@ -2730,7 +2764,10 @@ def admin_administrators(user):
+         conn.close()
+         return redirect(url_for("admin_administrators"))
+ 
+-    rows = conn.execute("SELECT * FROM users WHERE role='admin' ORDER BY created_at ASC").fetchall()
++    rows = conn.execute(
++        "SELECT id, full_name, email, role, is_super_admin, created_at "
++        "FROM users WHERE role='admin' ORDER BY created_at ASC"
++    ).fetchall()
+     conn.close()
+     return render_template("admin/administrators.html", rows=rows)
+ 
+diff --git a/db.py b/db.py
+index 414d3bb..33a9922 100644
+--- a/db.py
++++ b/db.py
+@@ -106,6 +106,45 @@ def migrate_db():
+     if "message" not in update_cols:
+         conn.execute("ALTER TABLE community_issue_updates ADD COLUMN message TEXT")
+     user_cols = [r["name"] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
++    if "is_super_admin" not in user_cols:
++        conn.execute(
++            "ALTER TABLE users ADD COLUMN is_super_admin INTEGER NOT NULL DEFAULT 0"
++        )
++    if "must_reset_pw" not in user_cols:
++        conn.execute(
++            "ALTER TABLE users ADD COLUMN must_reset_pw INTEGER NOT NULL DEFAULT 0"
++        )
++    if "status" not in user_cols:
++        conn.execute(
++            "ALTER TABLE users ADD COLUMN status TEXT NOT NULL DEFAULT 'active'"
++        )
++    if "failed_logins" not in user_cols:
++        conn.execute(
++            "ALTER TABLE users ADD COLUMN failed_logins INTEGER NOT NULL DEFAULT 0"
++        )
++    if "locked_until" not in user_cols:
++        conn.execute("ALTER TABLE users ADD COLUMN locked_until TEXT")
++    user_cols = [r["name"] for r in conn.execute("PRAGMA table_info(users)").fetchall()]
++    if "recovery_email" not in user_cols:
++        conn.execute("ALTER TABLE users ADD COLUMN recovery_email TEXT")
++        if "address" in user_cols:
++            conn.execute(
++                "UPDATE users SET recovery_email=substr(address, 10) "
++                "WHERE role='admin' AND address LIKE 'recovery:%' "
++                "AND recovery_email IS NULL"
++            )
++    founder_count = conn.execute(
++        "SELECT COUNT(*) FROM users WHERE role='admin' AND is_super_admin=1"
++    ).fetchone()[0]
++    if founder_count > 1:
++        conn.close()
++        raise sqlite3.IntegrityError(
++            "Multiple Founding Admin accounts exist; resolve duplicates before migration."
++        )
++    conn.execute(
++        "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_single_founding_admin "
++        "ON users(is_super_admin) WHERE role='admin' AND is_super_admin=1"
++    )
+     if "office" not in user_cols:
+         conn.execute("ALTER TABLE users ADD COLUMN office TEXT")
+         # Best-effort mapping of existing staff from their old category assignment / position.
+diff --git a/schema.sql b/schema.sql
+index 51a7682..81ff71e 100644
+--- a/schema.sql
++++ b/schema.sql
+@@ -12,7 +12,7 @@ CREATE TABLE IF NOT EXISTS users (
+     office          TEXT CHECK (office IN ('treasurer', 'secretary', 'bpso')),  -- staff only: which office they belong to (decides what they can access)
+     position        TEXT,                 -- staff display label (derived from office)
+     status          TEXT NOT NULL DEFAULT 'active' CHECK (status IN ('active', 'inactive')),
+-    is_super_admin  INTEGER NOT NULL DEFAULT 0,   -- only the seeded first admin can create other admins
++    is_super_admin  INTEGER NOT NULL DEFAULT 0,   -- only the Founding Admin can create other admins
+     must_reset_pw   INTEGER NOT NULL DEFAULT 0,  -- staff must set permanent password on first login
+     failed_logins   INTEGER NOT NULL DEFAULT 0,
+     locked_until    TEXT,
+@@ -20,9 +20,14 @@ CREATE TABLE IF NOT EXISTS users (
+     contact_number  TEXT,
+     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
+     created_by      INTEGER,              -- admin who created this account (staff/admin), NULL for self-registered residents
+-    profile_picture TEXT                  -- stored filename of uploaded profile photo, NULL if none
++    profile_picture TEXT,                 -- stored filename of uploaded profile photo, NULL if none
++    recovery_email  TEXT
+ );
+ 
++CREATE UNIQUE INDEX IF NOT EXISTS idx_users_single_founding_admin
++    ON users(is_super_admin)
++    WHERE role='admin' AND is_super_admin=1;
++
+ CREATE TABLE IF NOT EXISTS requests (
+     id              INTEGER PRIMARY KEY AUTOINCREMENT,
+     reference_no    TEXT NOT NULL UNIQUE,
+diff --git a/seed.py b/seed.py
+index 3db4aa6..360d98b 100644
+--- a/seed.py
++++ b/seed.py
+@@ -40,6 +40,22 @@ def _make_placeholder_upload():
+ 
+ 
+ def run():
++    demo_passwords = {
++        "admin": os.environ.get("DEMO_ADMIN_PASSWORD", ""),
++        "staff": os.environ.get("DEMO_STAFF_PASSWORD", ""),
++        "resident": os.environ.get("DEMO_RESIDENT_PASSWORD", ""),
++    }
++    for role, password in demo_passwords.items():
++        if (
++            len(password) < 8
++            or not any(character.isalpha() for character in password)
++            or not any(character.isdigit() for character in password)
++        ):
++            raise ValueError(
++                f"DEMO_{role.upper()}_PASSWORD must have at least 8 characters, "
++                "one letter, and one number."
++            )
++
+     if os.path.isfile(dbh.DB_PATH):
+         os.remove(dbh.DB_PATH)
+     dbh.init_db()
+@@ -48,8 +64,15 @@ def run():
+ 
+     # ---- accounts -----------------------------------------------------
+     admin_id = conn.execute(
+-        "INSERT INTO users (full_name, email, password_hash, role, address, is_super_admin) VALUES (?,?,?,?,?,1)",
+-        ("Elena Ramirez", "admin@barangayconnect.ph", generate_password_hash("Admin@1234"), "admin", "recovery:admin.recovery@barangayconnect.ph"),
++        "INSERT INTO users (full_name, email, recovery_email, password_hash, role) "
++        "VALUES (?,?,?,?,?)",
++        (
++            "Elena Ramirez",
++            "admin@barangayconnect.ph",
++            "admin@barangayconnect.ph",
++            generate_password_hash(demo_passwords["admin"]),
++            "admin",
++        ),
+     ).lastrowid
+ 
+     staff_defs = [
+@@ -63,7 +86,15 @@ def run():
+         sid = conn.execute(
+             "INSERT INTO users (full_name, email, password_hash, role, office, position, must_reset_pw, created_by) "
+             "VALUES (?,?,?,?,?,?,0,?)",
+-            (name, email, generate_password_hash("Staff@1234"), "staff", office, office_labels[office], admin_id),
++            (
++                name,
++                email,
++                generate_password_hash(demo_passwords["staff"]),
++                "staff",
++                office,
++                office_labels[office],
++                admin_id,
++            ),
+         ).lastrowid
+         staff_by_office.setdefault(office, []).append(sid)
+         dbh.log_action(conn, {"id": admin_id, "full_name": "Elena Ramirez"}, "Created staff account", target=email,
+@@ -78,7 +109,14 @@ def run():
+     for name, email, address, contact in resident_defs:
+         rid = conn.execute(
+             "INSERT INTO users (full_name, email, password_hash, role, address, contact_number) VALUES (?,?,?,?,?,?)",
+-            (name, email, generate_password_hash("Resident@1234"), "resident", address, contact),
++            (
++                name,
++                email,
++                generate_password_hash(demo_passwords["resident"]),
++                "resident",
++                address,
++                contact,
++            ),
+         ).lastrowid
+         resident_ids.append(rid)
+         dbh.log_action(conn, {"id": rid, "full_name": name}, "Resident self-registered", target=email)
+@@ -207,14 +245,14 @@ def run():
+     conn.close()
+     print("Database seeded successfully.\n")
+     print("=" * 60)
+-    print("TEST ACCOUNTS (all seeded, ready to use)")
++    print("TEST ACCOUNTS (passwords supplied via environment variables)")
+     print("=" * 60)
+     print(f"{'Role':<10} {'Email':<32} {'Password'}")
+-    print(f"{'Admin':<10} {'admin@barangayconnect.ph':<32} Admin@1234  (+ email OTP; SMTP required)")
++    print(f"{'Admin':<10} {'admin@barangayconnect.ph':<32} DEMO_ADMIN_PASSWORD (+ email OTP; SMTP required)")
+     for name, email, office in staff_defs:
+-        print(f"{'Staff':<10} {email:<32} Staff@1234  ({office_labels[office]})")
++        print(f"{'Staff':<10} {email:<32} DEMO_STAFF_PASSWORD  ({office_labels[office]})")
+     for name, email, *_ in resident_defs:
+-        print(f"{'Resident':<10} {email:<32} Resident@1234")
++        print(f"{'Resident':<10} {email:<32} DEMO_RESIDENT_PASSWORD")
+     print("=" * 60)
+ 
+ 
+diff --git a/setup_founding_admin.py b/setup_founding_admin.py
+index ad8c6bc..63731fc 100644
+--- a/setup_founding_admin.py
++++ b/setup_founding_admin.py
+@@ -1,141 +1,156 @@
+-
+ """
+-BarangayConnect - Founding Admin Setup
++Safely provision the single Founding Administrator.
+ 
+-Creates the first Founding Admin safely.
+-Does not delete or reset existing database records.
+-Credentials are stored in Render environment variables.
++The initial password is read only from FOUNDING_ADMIN_PASSWORD. It is hashed
++before it is written, and the account must change it after email OTP login.
+ """
+ 
+ import os
+ import re
++import sqlite3
+ import sys
+ 
+-from werkzeug.security import generate_password_hash
++from werkzeug.security import check_password_hash, generate_password_hash
+ 
+ import db as dbh
+ 
+ 
++FOUNDING_ADMIN_EMAIL = "ralphpatrickga@gmail.com"
++
++
+ def setup_founding_admin():
++    name = os.environ.get("FOUNDING_ADMIN_NAME", "").strip()
++    password = os.environ.get("FOUNDING_ADMIN_PASSWORD", "")
++
++    if not name:
++        raise ValueError("FOUNDING_ADMIN_NAME is missing.")
++    if (
++        len(password) < 12
++        or not re.search(r"[A-Za-z]", password)
++        or not re.search(r"\d", password)
++    ):
++        raise ValueError(
++            "FOUNDING_ADMIN_PASSWORD must have at least 12 characters, "
++            "one letter, and one number."
++        )
+ 
+-    # STEP 1: Initialize database if missing
+     os.makedirs(os.path.dirname(dbh.DB_PATH), exist_ok=True)
+-
+-    if not os.path.isfile(dbh.DB_PATH):
+-        print("[SETUP] Creating database...")
++    database_exists = os.path.isfile(dbh.DB_PATH)
++    if not database_exists:
+         dbh.init_db()
+-
+-    # STEP 2: Apply database migrations
+     dbh.migrate_db()
+ 
+     conn = dbh.get_db()
+-
+     try:
+-        # STEP 3: Check for existing Founding Admin
+-        existing = conn.execute(
+-            """
+-            SELECT id
+-            FROM users
+-            WHERE role = 'admin'
+-              AND is_super_admin = 1
+-            LIMIT 1
+-            """
+-        ).fetchone()
+-
+-        if existing:
+-            print("[SETUP] Founding Admin already exists.")
+-            print("[SETUP] No changes needed.")
+-            return True
+-
+-        # STEP 4: Get credentials from environment
+-        name = os.environ.get(
+-            "FOUNDING_ADMIN_NAME", ""
+-        ).strip()
+-
+-        email = os.environ.get(
+-            "FOUNDING_ADMIN_EMAIL", ""
+-        ).strip().lower()
+-
+-        password = os.environ.get(
+-            "FOUNDING_ADMIN_PASSWORD", ""
+-        )
+-
+-        # STEP 5: Validate credentials
+-        if not name:
++        conn.execute("BEGIN IMMEDIATE")
++        founders = conn.execute(
++            "SELECT id, full_name, role, is_super_admin, status "
++            "FROM users WHERE role='admin' AND is_super_admin=1"
++        ).fetchall()
++        if len(founders) > 1:
+             raise ValueError(
+-                "FOUNDING_ADMIN_NAME is missing."
++                "Multiple Founding Admin accounts exist; reconcile them manually "
++                "before running setup."
+             )
+ 
+-        if not re.fullmatch(r"[^@\s]+@[^@\s]+\.[^@\s]+", email):
+-            raise ValueError(
+-                "FOUNDING_ADMIN_EMAIL must be valid."
+-            )
+-
+-        if (
+-            len(password) < 12
+-            or not re.search(r"[A-Za-z]", password)
+-            or not re.search(r"\d", password)
+-        ):
+-            raise ValueError(
+-                "FOUNDING_ADMIN_PASSWORD must have "
+-                "at least 12 characters, one letter, "
+-                "and one number."
+-            )
+-
+-        # STEP 6: Prevent duplicate email
+-        duplicate = conn.execute(
+-            "SELECT id FROM users WHERE email = ?",
+-            (email,)
++        target = conn.execute(
++            "SELECT id FROM users WHERE lower(email)=?",
++            (FOUNDING_ADMIN_EMAIL,),
+         ).fetchone()
+ 
+-        if duplicate:
+-            raise ValueError(
+-                "Email already belongs to another account."
++        if founders:
++            founder = founders[0]
++            if founder["role"] != "admin" or not founder["is_super_admin"]:
++                raise ValueError("The existing Founding Admin could not be identified safely.")
++            if founder["status"] != "active":
++                raise ValueError(
++                    "The existing Founding Admin account is inactive; no account was changed."
++                )
++            if target and target["id"] != founder["id"]:
++                raise ValueError(
++                    "The designated email belongs to another account; no account was changed."
++                )
++
++            conn.execute(
++                "UPDATE users SET full_name=?, email=?, recovery_email=?, password_hash=?, "
++                "must_reset_pw=1, failed_logins=0, locked_until=NULL WHERE id=?",
++                (
++                    name,
++                    FOUNDING_ADMIN_EMAIL,
++                    FOUNDING_ADMIN_EMAIL,
++                    generate_password_hash(password),
++                    founder["id"],
++                ),
+             )
+-
+-        # STEP 7: Hash password
+-        password_hash = generate_password_hash(password)
+-
+-        # STEP 8: Create Founding Admin
+-        conn.execute(
+-            """
+-            INSERT INTO users (
+-                full_name,
+-                email,
+-                password_hash,
+-                role,
+-                is_super_admin,
+-                status,
+-                must_reset_pw,
+-                failed_logins,
+-                locked_until
+-            )
+-            VALUES (?, ?, ?, 'admin', 1, 'active', 0, 0, NULL)
+-            """,
+-            (
+-                name,
+-                email,
+-                password_hash
++            action = "Updated Founding Admin account and required initial password change"
++        else:
++            existing_admin = conn.execute(
++                "SELECT id FROM users WHERE role='admin' LIMIT 1"
++            ).fetchone()
++            if existing_admin:
++                raise ValueError(
++                    "Administrator accounts exist but none is marked Founding Admin; "
++                    "no account was promoted or changed."
++                )
++            if target:
++                raise ValueError(
++                    "The designated email belongs to a non-admin account; "
++                    "no account was changed."
++                )
++
++            conn.execute(
++                "INSERT INTO users (full_name, email, recovery_email, password_hash, role, "
++                "is_super_admin, status, must_reset_pw, failed_logins, locked_until) "
++                "VALUES (?, ?, ?, ?, 'admin', 1, 'active', 1, 0, NULL)",
++                (
++                    name,
++                    FOUNDING_ADMIN_EMAIL,
++                    FOUNDING_ADMIN_EMAIL,
++                    generate_password_hash(password),
++                ),
+             )
++            action = "Created Founding Admin account and required initial password change"
++
++        dbh.log_action(
++            conn,
++            None,
++            action,
++            target=FOUNDING_ADMIN_EMAIL,
+         )
++        verified = conn.execute(
++            "SELECT id, role, is_super_admin, status, must_reset_pw, "
++            "recovery_email, password_hash "
++            "FROM users WHERE lower(email)=?",
++            (FOUNDING_ADMIN_EMAIL,),
++        ).fetchall()
++        founder_count = conn.execute(
++            "SELECT COUNT(*) FROM users WHERE role='admin' AND is_super_admin=1"
++        ).fetchone()[0]
++        if (
++            len(verified) != 1
++            or verified[0]["role"] != "admin"
++            or not verified[0]["is_super_admin"]
++            or verified[0]["status"] != "active"
++            or not verified[0]["must_reset_pw"]
++            or verified[0]["recovery_email"] != FOUNDING_ADMIN_EMAIL
++            or not check_password_hash(verified[0]["password_hash"], password)
++            or founder_count != 1
++        ):
++            raise RuntimeError("Post-setup account verification failed.")
+ 
+         conn.commit()
+-
+-        print("[SETUP] Founding Admin created successfully.")
+-        print("[SETUP] Role: admin")
+-        print("[SETUP] Super Admin: enabled")
+-
+-        return True
+-
+-    except Exception as error:
+-        conn.rollback()
+-        print(f"[SETUP ERROR] {error}", file=sys.stderr)
+-        return False
+-
++        print("[SETUP] Founding Admin account configured and verified.")
++        print("[SETUP] Email and recovery email are set to the designated address.")
++        print("[SETUP] The initial password must be changed after email OTP login.")
+     finally:
++        if conn.in_transaction:
++            conn.rollback()
+         conn.close()
+ 
+ 
+ if __name__ == "__main__":
+-    if not setup_founding_admin():
++    try:
++        setup_founding_admin()
++    except (OSError, sqlite3.Error, ValueError, RuntimeError) as error:
++        print(f"[SETUP ERROR] {error}", file=sys.stderr)
+         sys.exit(1)
+diff --git a/templates/first_login_reset.html b/templates/first_login_reset.html
+index d69e0d9..3034fbc 100644
+--- a/templates/first_login_reset.html
++++ b/templates/first_login_reset.html
+@@ -8,7 +8,7 @@
+       <div><strong style="font-family:var(--font-display); color:var(--navy)">BarangayConnect</strong></div>
+     </div>
+     <h1>Set a permanent password</h1>
+-    <p class="auth-sub">This is your first login. Replace the temporary password issued by your Administrator.</p>
++    <p class="auth-sub">This is your first login. Replace the initial password configured for your account.</p>
+     <form method="POST" class="form-grid">
+       <div class="form-row">
+         <label>New password</label>
+diff --git a/tests/test_email_and_allowance.py b/tests/test_email_and_allowance.py
+index 7d9d29d..2cd762d 100644
+--- a/tests/test_email_and_allowance.py
++++ b/tests/test_email_and_allowance.py
+@@ -260,6 +260,95 @@ class SecurityAndAllowanceTests(unittest.TestCase):
+             self.assertIsNone(challenge["otp_hash"])
+             self.assertIsNotNone(challenge["used_at"])
+ 
++    def test_founding_admin_otp_is_followed_by_required_password_change(self):
++        email = "test-admin@example.test"
++        conn = dbh.get_db()
++        conn.execute(
++            "UPDATE users SET must_reset_pw=1, recovery_email=? WHERE id=1",
++            (email,),
++        )
++        conn.commit()
++        conn.close()
++
++        client = A.app.test_client()
++        with patch.object(A.email_service, "send_email") as send_email:
++            response = client.post(
++                "/login",
++                data={"email": email, "password": "Admin@1234"},
++            )
++            self.assertEqual(response.status_code, 302)
++            self.assertEqual(send_email.call_args.args[0], email)
++            code = re.search(r"code is (\d{6})", send_email.call_args.args[2]).group(1)
++
++            verified = client.post("/verify-otp", data={"otp": code})
++            self.assertEqual(verified.status_code, 302)
++            self.assertIn("/first-login-reset", verified.location)
++            self.assertEqual(client.get("/first-login-reset").status_code, 200)
++
++        password = "NewFoundingPassword@123"
++        response = client.post(
++            "/first-login-reset",
++            data={"password": password, "confirm_password": password},
++        )
++        self.assertEqual(response.status_code, 302)
++        self.assertIn("/admin", response.location)
++        conn = dbh.get_db()
++        account = conn.execute(
++            "SELECT password_hash, must_reset_pw FROM users WHERE id=1"
++        ).fetchone()
++        self.assertTrue(check_password_hash(account["password_hash"], password))
++        self.assertEqual(account["must_reset_pw"], 0)
++        conn.close()
++
++        administrators = client.get("/admin/administrators")
++        self.assertEqual(administrators.status_code, 200)
++        self.assertIn(
++            b"Create Administrator Account",
++            administrators.data,
++        )
++
++    def test_admin_password_recovery_uses_registered_recovery_email(self):
++        login_email = "recover-admin@example.test"
++        recovery_email = "admin-recovery@example.test"
++        conn = dbh.get_db()
++        conn.execute(
++            "INSERT INTO users (full_name,email,recovery_email,password_hash,role) "
++            "VALUES (?,?,?,?, 'admin')",
++            (
++                "Recovery Admin",
++                login_email,
++                recovery_email,
++                generate_password_hash("Admin@1234"),
++            ),
++        )
++        conn.commit()
++        conn.close()
++
++        client = A.app.test_client()
++        with patch.object(A.email_service, "send_email") as send_email:
++            response = client.post("/forgot-password", data={"email": login_email})
++            self.assertEqual(response.status_code, 302)
++            self.assertEqual(send_email.call_args.args[0], recovery_email)
++            code = re.search(r"(?m)^(\d{6})$", send_email.call_args.args[2]).group(1)
++
++        password = "RecoveredAdminPassword@123"
++        response = client.post(
++            "/reset-password",
++            data={
++                "email": login_email,
++                "code": code,
++                "password": password,
++                "confirm_password": password,
++            },
++        )
++        self.assertEqual(response.status_code, 302)
++        conn = dbh.get_db()
++        account = conn.execute(
++            "SELECT password_hash FROM users WHERE email=?", (login_email,)
++        ).fetchone()
++        self.assertTrue(check_password_hash(account["password_hash"], password))
++        conn.close()
++
+     def test_allowance_cooldown_restore_and_restore_once(self):
+         resident_id = self.create_resident("allowance@example.test")
+         client = self.resident_client(resident_id)
+diff --git a/tests/test_founding_admin_setup.py b/tests/test_founding_admin_setup.py
+new file mode 100644
+index 0000000..3afec5b
+--- /dev/null
++++ b/tests/test_founding_admin_setup.py
+@@ -0,0 +1,222 @@
++import os
++import secrets
++import sqlite3
++import sys
++import tempfile
++import unittest
++from unittest.mock import patch
++
++from werkzeug.security import check_password_hash, generate_password_hash
++
++ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
++sys.path.insert(0, ROOT)
++
++import db as dbh
++from setup_founding_admin import FOUNDING_ADMIN_EMAIL, setup_founding_admin
++
++
++class FoundingAdminSetupTests(unittest.TestCase):
++    def setUp(self):
++        self.temp_dir = tempfile.TemporaryDirectory()
++        self.old_db_path = dbh.DB_PATH
++        dbh.DB_PATH = os.path.join(self.temp_dir.name, "founding-admin.db")
++        dbh.init_db()
++        self.password = secrets.token_urlsafe(18) + "A1"
++        self.env = patch.dict(
++            os.environ,
++            {
++                "FOUNDING_ADMIN_NAME": "Ralph Patrick Ga",
++                "FOUNDING_ADMIN_PASSWORD": self.password,
++            },
++        )
++        self.env.start()
++
++    def tearDown(self):
++        self.env.stop()
++        dbh.DB_PATH = self.old_db_path
++        self.temp_dir.cleanup()
++
++    def test_updates_existing_founder_in_place_and_preserves_related_records(self):
++        conn = dbh.get_db()
++        founder_id = conn.execute(
++            "INSERT INTO users (full_name,email,password_hash,role,is_super_admin) "
++            "VALUES (?,?,?,?,1)",
++            (
++                "Old Founding Admin",
++                "old-founder@example.test",
++                generate_password_hash("old-password"),
++                "admin",
++            ),
++        ).lastrowid
++        conn.execute(
++            "INSERT INTO notifications (user_id,message) VALUES (?,?)",
++            (founder_id, "Existing notification"),
++        )
++        conn.execute(
++            "INSERT INTO audit_logs (actor_id,actor_name,action) VALUES (?,?,?)",
++            (founder_id, "Old Founding Admin", "Existing audit history"),
++        )
++        conn.commit()
++        conn.close()
++
++        setup_founding_admin()
++
++        conn = dbh.get_db()
++        account = conn.execute(
++            "SELECT * FROM users WHERE id=?", (founder_id,)
++        ).fetchone()
++        self.assertEqual(account["email"], FOUNDING_ADMIN_EMAIL)
++        self.assertEqual(account["recovery_email"], FOUNDING_ADMIN_EMAIL)
++        self.assertEqual(account["role"], "admin")
++        self.assertEqual(account["is_super_admin"], 1)
++        self.assertEqual(account["must_reset_pw"], 1)
++        self.assertTrue(check_password_hash(account["password_hash"], self.password))
++        self.assertEqual(
++            conn.execute(
++                "SELECT COUNT(*) FROM users WHERE role='admin' AND is_super_admin=1"
++            ).fetchone()[0],
++            1,
++        )
++        self.assertEqual(
++            conn.execute(
++                "SELECT COUNT(*) FROM notifications WHERE user_id=?", (founder_id,)
++            ).fetchone()[0],
++            1,
++        )
++        self.assertEqual(
++            conn.execute(
++                "SELECT COUNT(*) FROM audit_logs WHERE actor_id=? AND action=?",
++                (founder_id, "Existing audit history"),
++            ).fetchone()[0],
++            1,
++        )
++        conn.close()
++
++    def test_refuses_to_take_email_from_another_account(self):
++        conn = dbh.get_db()
++        founder_id = conn.execute(
++            "INSERT INTO users (full_name,email,password_hash,role,is_super_admin) "
++            "VALUES (?,?,?,?,1)",
++            (
++                "Old Founding Admin",
++                "old-founder@example.test",
++                generate_password_hash("old-password"),
++                "admin",
++            ),
++        ).lastrowid
++        conn.execute(
++            "INSERT INTO users (full_name,email,password_hash,role) VALUES (?,?,?,'resident')",
++            (
++                "Existing Email Owner",
++                FOUNDING_ADMIN_EMAIL,
++                generate_password_hash("other-password"),
++            ),
++        )
++        conn.commit()
++        conn.close()
++
++        with self.assertRaisesRegex(ValueError, "belongs to another account"):
++            setup_founding_admin()
++
++        conn = dbh.get_db()
++        founder = conn.execute(
++            "SELECT email FROM users WHERE id=?", (founder_id,)
++        ).fetchone()
++        self.assertEqual(founder["email"], "old-founder@example.test")
++        conn.close()
++
++    def test_refuses_to_promote_unmarked_admin(self):
++        conn = dbh.get_db()
++        conn.execute(
++            "INSERT INTO users (full_name,email,password_hash,role) VALUES (?,?,?,'admin')",
++            ("Ordinary Admin", "ordinary@example.test", generate_password_hash("ordinary")),
++        )
++        conn.commit()
++        conn.close()
++
++        with self.assertRaisesRegex(ValueError, "none is marked Founding Admin"):
++            setup_founding_admin()
++
++        conn = dbh.get_db()
++        self.assertEqual(
++            conn.execute(
++                "SELECT COUNT(*) FROM users WHERE role='admin' AND is_super_admin=1"
++            ).fetchone()[0],
++            0,
++        )
++        conn.close()
++
++    def test_creates_initial_founder_only_when_no_admin_exists(self):
++        setup_founding_admin()
++
++        conn = dbh.get_db()
++        account = conn.execute(
++            "SELECT * FROM users WHERE email=?", (FOUNDING_ADMIN_EMAIL,)
++        ).fetchone()
++        self.assertIsNotNone(account)
++        self.assertEqual(account["role"], "admin")
++        self.assertEqual(account["is_super_admin"], 1)
++        self.assertEqual(account["must_reset_pw"], 1)
++        self.assertEqual(
++            conn.execute(
++                "SELECT COUNT(*) FROM users WHERE role='admin' AND is_super_admin=1"
++            ).fetchone()[0],
++            1,
++        )
++        conn.close()
++
++    def test_migrates_legacy_recovery_email_and_enforces_single_founder(self):
++        legacy_db_path = os.path.join(self.temp_dir.name, "legacy.db")
++        with open(dbh.SCHEMA_PATH, encoding="utf-8") as schema_file:
++            schema = schema_file.read()
++        schema = schema.replace(
++            "profile_picture TEXT,                 -- stored filename of uploaded profile photo, NULL if none",
++            "profile_picture TEXT                  -- stored filename of uploaded profile photo, NULL if none",
++        )
++        schema = schema.replace("    recovery_email  TEXT\n", "")
++        schema = schema.replace(
++            "CREATE UNIQUE INDEX IF NOT EXISTS idx_users_single_founding_admin\n"
++            "    ON users(is_super_admin)\n"
++            "    WHERE role='admin' AND is_super_admin=1;\n\n",
++            "",
++        )
++        conn = sqlite3.connect(legacy_db_path)
++        conn.executescript(schema)
++        conn.execute(
++            "INSERT INTO users (full_name,email,password_hash,role,is_super_admin,address) "
++            "VALUES (?,?,?,?,1,?)",
++            (
++                "Legacy Founder",
++                FOUNDING_ADMIN_EMAIL,
++                generate_password_hash("legacy-password"),
++                "admin",
++                "recovery:legacy@example.test",
++            ),
++        )
++        conn.commit()
++        conn.close()
++
++        with patch.object(dbh, "DB_PATH", legacy_db_path):
++            dbh.migrate_db()
++            conn = dbh.get_db()
++            account = conn.execute(
++                "SELECT recovery_email FROM users WHERE email=?",
++                (FOUNDING_ADMIN_EMAIL,),
++            ).fetchone()
++            self.assertEqual(account["recovery_email"], "legacy@example.test")
++            with self.assertRaises(sqlite3.IntegrityError):
++                conn.execute(
++                    "INSERT INTO users (full_name,email,password_hash,role,is_super_admin) "
++                    "VALUES (?,?,?,?,1)",
++                    (
++                        "Second Founder",
++                        "second-founder@example.test",
++                        generate_password_hash("second-password"),
++                        "admin",
++                    ),
++                )
++            conn.close()
++
++
++if __name__ == "__main__":
++    unittest.main()
+diff --git a/tests/test_new_features.py b/tests/test_new_features.py
+index e9e8289..123301f 100644
+--- a/tests/test_new_features.py
++++ b/tests/test_new_features.py
+@@ -7,6 +7,7 @@ Uses its own temporary database (and backups folder), never instance/.
+ import contextlib
+ import io
+ import os
++import secrets
+ import sqlite3
+ import sys
+ import tempfile
+@@ -48,7 +49,15 @@ class FeatureTestBase(unittest.TestCase):
+         dbh.DB_PATH = os.path.join(cls._dir, "test.db")
+         dbh._last_auto_check = 0.0
+         with contextlib.redirect_stdout(io.StringIO()):
+-            seed.run()
++            with patch.dict(
++                os.environ,
++                {
++                    "DEMO_ADMIN_PASSWORD": secrets.token_urlsafe(16) + "A1",
++                    "DEMO_STAFF_PASSWORD": STAFF_PW,
++                    "DEMO_RESIDENT_PASSWORD": "Resident@1234",
++                },
++            ):
++                seed.run()
+ 
+     @classmethod
+     def tearDownClass(cls):
+diff --git a/tests/test_office_access.py b/tests/test_office_access.py
+index 7240ff2..f1d080f 100644
+--- a/tests/test_office_access.py
++++ b/tests/test_office_access.py
+@@ -9,10 +9,12 @@ import contextlib
+ import io
+ import os
+ import re
++import secrets
+ import sqlite3
+ import sys
+ import tempfile
+ import unittest
++from unittest.mock import patch
+ 
+ ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ sys.path.insert(0, ROOT)
+@@ -54,7 +56,15 @@ class OfficeAccessTests(unittest.TestCase):
+         os.makedirs(cls.UPLOAD_DIR, exist_ok=True)
+         cls._files_before = set(os.listdir(cls.UPLOAD_DIR))
+         with contextlib.redirect_stdout(io.StringIO()):
+-            seed.run()
++            with patch.dict(
++                os.environ,
++                {
++                    "DEMO_ADMIN_PASSWORD": secrets.token_urlsafe(16) + "A1",
++                    "DEMO_STAFF_PASSWORD": STAFF_PW,
++                    "DEMO_RESIDENT_PASSWORD": "Resident@1234",
++                },
++            ):
++                seed.run()
+         conn = dbh.get_db()
+         cls.req = {}   # request type -> a request row
+         for t in ALL_TYPES:

@@ -1135,7 +1135,7 @@ def login():
                 flash("Invalid credentials.", "error")
             return render_template("login.html")
 
-        if not user["email_verified"]:
+        if user["role"] == "resident" and not user["email_verified"]:
             conn.close()
             flash("Please verify your email address before logging in.", "error")
             return render_template("login.html"), 403

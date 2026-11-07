@@ -504,7 +504,8 @@ class SecurityAndAllowanceTests(unittest.TestCase):
             password_hash = generate_password_hash("Resident@1234")
             if is_super_admin:
                 conn.execute(
-                    "UPDATE users SET password_hash=?,must_reset_pw=0 WHERE email=?",
+                    "UPDATE users SET password_hash=?,must_reset_pw=0,email_verified=0 "
+                    "WHERE email=?",
                     (password_hash, email),
                 )
                 user_ids[email] = conn.execute(
@@ -513,8 +514,8 @@ class SecurityAndAllowanceTests(unittest.TestCase):
                 continue
             user_ids[email] = conn.execute(
                 "INSERT INTO users "
-                "(full_name,email,password_hash,role,office,is_super_admin) "
-                "VALUES (?,?,?,?,?,?)",
+                "(full_name,email,password_hash,role,office,is_super_admin,email_verified) "
+                "VALUES (?,?,?,?,?,?,?)",
                 (
                     role.title(),
                     email,
@@ -522,6 +523,7 @@ class SecurityAndAllowanceTests(unittest.TestCase):
                     role,
                     office,
                     is_super_admin,
+                    1 if role == "resident" else 0,
                 ),
             ).lastrowid
         conn.commit()

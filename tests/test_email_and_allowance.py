@@ -65,17 +65,35 @@ class SecurityAndAllowanceTests(unittest.TestCase):
             "confirm_password": "Resident@1234",
             "address": "Purok 1",
         }
-        response = client.post("/register", data=data)
+        with patch.dict(os.environ, {"APP_BASE_URL": "https://barangayconnect.example.test"}), \
+                patch.object(A.email_service, "send_email") as send_email:
+            response = client.post("/register", data=data)
         self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.location, "/verify-registration")
+        code = re.search(r"is (\d{6})", send_email.call_args.args[2]).group(1)
         conn = dbh.get_db()
-        self.assertIsNone(conn.execute(
-            "SELECT contact_number FROM users WHERE email=?", (data["email"],)
-        ).fetchone()["contact_number"])
+        pending = conn.execute(
+            "SELECT contact_number,email_verified FROM users WHERE email=?",
+            (data["email"],),
+        ).fetchone()
+        conn.close()
+        self.assertIsNone(pending["contact_number"])
+        self.assertEqual(pending["email_verified"], 0)
+        rejected = client.post("/login", data={"email": data["email"], "password": "Resident@1234"})
+        self.assertEqual(rejected.status_code, 403)
+        verified = client.post("/verify-registration", data={"email_otp": code})
+        self.assertEqual(verified.location, "/login")
+        conn = dbh.get_db()
+        self.assertEqual(conn.execute(
+            "SELECT email_verified FROM users WHERE email=?", (data["email"],)
+        ).fetchone()["email_verified"], 1)
         conn.close()
 
         data["email"] = "new-resident-with-mobile@example.test"
         data["contact_number"] = "0917 123 4567"
-        response = client.post("/register", data=data)
+        with patch.dict(os.environ, {"APP_BASE_URL": "https://barangayconnect.example.test"}), \
+                patch.object(A.email_service, "send_email") as send_email:
+            response = client.post("/register", data=data)
         self.assertEqual(response.status_code, 302)
         conn = dbh.get_db()
         contact = conn.execute(
@@ -83,6 +101,7 @@ class SecurityAndAllowanceTests(unittest.TestCase):
         ).fetchone()["contact_number"]
         conn.close()
         self.assertEqual(contact, "+639171234567")
+        self.assertEqual(client.get("/verify-registration").status_code, 200)
 
     def resident_client(self, resident_id):
         client = A.app.test_client()
@@ -136,6 +155,22 @@ class SecurityAndAllowanceTests(unittest.TestCase):
             with self.assertRaises(A.email_service.EmailConfigurationError):
                 A.email_service.send_email("resident@example.test", "Test subject", "Test body")
 
+    def test_production_reset_link_requires_configured_public_https_origin(self):
+        config = {"APP_BASE_URL": "", "RENDER_EXTERNAL_URL": ""}
+        with patch.dict(os.environ, config), A.app.test_request_context("/"):
+            with self.assertRaisesRegex(
+                A.email_service.EmailConfigurationError, "APP_BASE_URL must be configured"
+            ):
+                A._password_reset_link("test-token")
+        with patch.dict(os.environ, {
+            "APP_BASE_URL": "http://localhost:5000",
+            "RENDER_EXTERNAL_URL": "",
+        }), A.app.test_request_context("/"):
+            with self.assertRaisesRegex(
+                A.email_service.EmailConfigurationError, "localhost reset URL"
+            ):
+                A._password_reset_link("test-token")
+
     def test_reset_email_link_is_hashed_single_use_and_resets_without_login(self):
         email = "reset-flow@example.test"
         resident_id = self.create_resident(email)
@@ -144,11 +179,19 @@ class SecurityAndAllowanceTests(unittest.TestCase):
                 patch.object(A.email_service, "send_email") as send_email:
             response = client.post("/forgot-password", data={"email": email})
             self.assertEqual(response.status_code, 302)
+            self.assertEqual(response.location, "/forgot-password?requested=1")
             confirmation = client.get(response.location)
-        self.assertIn("If that address belongs to an active account", confirmation.get_data(as_text=True))
+        confirmation_html = confirmation.get_data(as_text=True)
+        self.assertIn("If an active account matches that email", confirmation_html)
+        self.assertNotIn('id="forgot-password-form"', confirmation_html)
+        self.assertNotIn("Send Reset Link", confirmation_html)
         send_email.assert_called_once()
         body = send_email.call_args.args[2]
         reset_url = re.search(r"https://barangayconnect\.example\.test/reset-password/\S+", body).group(0)
+        self.assertEqual(send_email.call_args.args[1], "BarangayConnect - Password Reset Request")
+        html_body = send_email.call_args.kwargs["html_body"]
+        self.assertIn(f'href="{reset_url}"', html_body)
+        self.assertIn(">Reset Password</a>", html_body)
         token = urlsplit(reset_url).path.rsplit("/", 1)[-1]
         self.assertEqual(send_email.call_args.args[0], email)
         conn = dbh.get_db()
@@ -191,15 +234,13 @@ class SecurityAndAllowanceTests(unittest.TestCase):
             old_password = client.post(
                 "/login", data={"email": email, "password": "Resident@1234"}
             )
-            self.assertNotEqual(old_password.location, "/verify-otp")
+            self.assertEqual(old_password.status_code, 200)
             self.assertEqual(send_email.call_count, 0)
             new_password = client.post(
                 "/login", data={"email": email, "password": "Updated@123"}
             )
-            self.assertEqual(new_password.location, "/verify-otp")
-            otp = re.search(r"code is (\d{6})", send_email.call_args.args[2]).group(1)
-            authenticated = client.post("/verify-otp", data={"email_otp": otp})
-            self.assertEqual(authenticated.location, "/dashboard")
+            self.assertEqual(new_password.location, "/dashboard")
+            self.assertEqual(send_email.call_count, 0)
 
     def test_staff_reset_link_uses_registered_email_and_invalidates_previous_token(self):
         email = "reset-staff@example.test"
@@ -253,13 +294,15 @@ class SecurityAndAllowanceTests(unittest.TestCase):
         with patch.dict(os.environ, {
             "PASSWORD_RESET_RESEND_SECONDS": "1",
             "PASSWORD_RESET_MAX_SENDS_PER_HOUR": "1",
+            "APP_BASE_URL": "https://barangayconnect.example.test",
         }), patch.object(A.email_service, "send_email") as send_email:
             client.post("/forgot-password", data={"email": email})
             limited = client.post(
                 "/forgot-password", data={"email": email}, follow_redirects=True
             )
         self.assertEqual(send_email.call_count, 1)
-        self.assertIn("If that address belongs to an active account", limited.get_data(as_text=True))
+        self.assertIn("If an active account matches that email", limited.get_data(as_text=True))
+        self.assertNotIn('id="forgot-password-form"', limited.get_data(as_text=True))
 
     def test_unknown_email_and_smtp_failure_have_generic_response(self):
         client = A.app.test_client()
@@ -272,7 +315,8 @@ class SecurityAndAllowanceTests(unittest.TestCase):
         send_email.assert_not_called()
         email = "failed-reset@example.test"
         user_id = self.create_resident(email)
-        with patch.object(
+        with patch.dict(os.environ, {"APP_BASE_URL": "https://barangayconnect.example.test"}), \
+                patch.object(
             A.email_service,
             "send_email",
             side_effect=A.email_service.EmailConfigurationError("not configured"),
@@ -287,12 +331,22 @@ class SecurityAndAllowanceTests(unittest.TestCase):
         ).fetchone()
         self.assertIsNotNone(token["used_at"])
         conn.close()
+        with patch.dict(os.environ, {"APP_BASE_URL": "https://barangayconnect.example.test"}), \
+                patch.object(A.email_service, "send_email") as retry_email:
+            retry = client.post(
+                "/forgot-password",
+                data={"email": email},
+                follow_redirects=True,
+            )
+        self.assertEqual(retry_email.call_count, 1)
+        self.assertNotIn('id="forgot-password-form"', retry.get_data(as_text=True))
 
     def test_invalid_and_expired_reset_links_are_rejected(self):
         email = "expired-reset@example.test"
         user_id = self.create_resident(email)
         client = A.app.test_client()
-        with patch.object(A.email_service, "send_email") as send_email:
+        with patch.dict(os.environ, {"APP_BASE_URL": "https://barangayconnect.example.test"}), \
+                patch.object(A.email_service, "send_email") as send_email:
             client.post("/forgot-password", data={"email": email})
         reset_url = re.search(r"https?://\S+", send_email.call_args.args[2]).group(0)
         self.assertEqual(client.get("/reset-password/not-a-valid-token").status_code, 400)
@@ -305,106 +359,170 @@ class SecurityAndAllowanceTests(unittest.TestCase):
         conn.close()
         self.assertEqual(client.get(reset_url).status_code, 400)
 
-    def test_admin_otp_delivery_expiry_resend_and_one_time_validation(self):
-        email = "otp-admin@example.test"
+    def test_registration_verification_rejects_wrong_expired_and_reused_codes(self):
+        email = "verify-registration@example.test"
+        client = A.app.test_client()
+        with patch.object(A.email_service, "send_email") as send_email:
+            response = client.post("/register", data={
+                "full_name": "Unverified Resident",
+                "email": email,
+                "password": "Resident@1234",
+                "confirm_password": "Resident@1234",
+                "address": "Purok 2",
+            })
+        self.assertEqual(response.location, "/verify-registration")
+        code = re.search(r"is (\d{6})", send_email.call_args.args[2]).group(1)
+        wrong_code = "000000" if code != "000000" else "000001"
+        wrong = client.post("/verify-registration", data={"email_otp": wrong_code}, follow_redirects=True)
+        self.assertIn("Incorrect email verification code", wrong.get_data(as_text=True))
         conn = dbh.get_db()
-        admin_id = conn.execute(
-            "INSERT INTO users (full_name,email,password_hash,role,contact_number) VALUES (?,?,?,'admin',?)",
-            ("OTP Admin", email, generate_password_hash("Admin@1234"), "+639171000002"),
-        ).lastrowid
+        conn.execute(
+            "UPDATE registration_email_verifications SET expires_at=?,sent_at=? WHERE user_id=("
+            "SELECT id FROM users WHERE email=?)",
+            (
+                (datetime.now() - timedelta(seconds=1)).isoformat(),
+                (datetime.now() - timedelta(seconds=2)).isoformat(),
+                email,
+            ),
+        )
         conn.commit()
         conn.close()
+        expired = client.post(
+            "/verify-registration", data={"email_otp": code}, follow_redirects=True
+        )
+        self.assertIn("invalid or expired", expired.get_data(as_text=True).lower())
+        with patch.dict(os.environ, {"REGISTRATION_OTP_RESEND_SECONDS": "1"}), \
+                patch.object(A.email_service, "send_email") as resend_email:
+            client.post("/verify-registration/resend")
+        new_code = re.search(r"is (\d{6})", resend_email.call_args.args[2]).group(1)
+        conn = dbh.get_db()
+        new_code_hash = conn.execute(
+            "SELECT otp_hash FROM registration_email_verifications WHERE user_id=("
+            "SELECT id FROM users WHERE email=?)",
+            (email,),
+        ).fetchone()["otp_hash"]
+        conn.close()
+        self.assertEqual(new_code_hash, A._otp_digest(new_code))
+        self.assertNotEqual(new_code_hash, A._otp_digest(code))
+        old_code = client.post(
+            "/verify-registration", data={"email_otp": code}, follow_redirects=True
+        )
+        self.assertIn("Incorrect email verification code", old_code.get_data(as_text=True))
+        verified = client.post("/verify-registration", data={"email_otp": new_code})
+        self.assertEqual(verified.location, "/login")
 
+    def test_registration_email_is_still_one_time_and_rate_limited(self):
+        email = "registration-one-time@example.test"
         client = A.app.test_client()
-        with patch.object(A.email_service, "send_email") as send_email, patch.dict(
-            os.environ, {"ADMIN_OTP_RESEND_SECONDS": "60"}
-        ):
-            response = client.post("/login", data={"email": email, "password": "Admin@1234"})
-            self.assertEqual(response.status_code, 302)
-            old_email_code = re.search(r"code is (\d{6})", send_email.call_args.args[2]).group(1)
-            self.assertEqual(client.get("/verify-otp").status_code, 200)
-            self.assertNotIn(old_email_code, client.get("/verify-otp").get_data(as_text=True))
-            self.assertNotIn("SMS verification code", client.get("/verify-otp").get_data(as_text=True))
-            rate_limited = client.post("/verify-otp/resend", follow_redirects=True)
+        with patch.dict(os.environ, {"REGISTRATION_OTP_RESEND_SECONDS": "60"}), \
+                patch.object(A.email_service, "send_email") as send_email:
+            client.post("/register", data={
+                "full_name": "Verified Resident",
+                "email": email,
+                "password": "Resident@1234",
+                "confirm_password": "Resident@1234",
+                "address": "Purok 3",
+            })
+            code = re.search(r"is (\d{6})", send_email.call_args.args[2]).group(1)
+            rate_limited = client.post(
+                "/verify-registration/resend", follow_redirects=True
+            )
             self.assertIn("Please wait", rate_limited.get_data(as_text=True))
             self.assertEqual(send_email.call_count, 1)
+            verified = client.post("/verify-registration", data={"email_otp": code})
+            self.assertEqual(verified.location, "/login")
+            self.assertEqual(
+                client.post("/verify-registration", data={"email_otp": code}).location,
+                "/register",
+            )
+        response = client.post("/login", data={"email": email, "password": "Resident@1234"})
+        self.assertEqual(response.location, "/dashboard")
+        with client.session_transaction() as session:
+            self.assertIn("user_id", session)
 
-            wrong_code = "000000" if old_email_code != "000000" else "000001"
-            wrong = client.post("/verify-otp", data={"email_otp": wrong_code})
-            self.assertEqual(wrong.status_code, 302)
-            conn = dbh.get_db()
-            conn.execute(
-                "UPDATE admin_otp_challenges SET expires_at=?, sent_at=? WHERE user_id=?",
-                (
-                    (datetime.now() - timedelta(seconds=1)).isoformat(),
-                    (datetime.now() - timedelta(seconds=61)).isoformat(),
-                    admin_id,
-                ),
-            )
-            conn.commit()
-            conn.close()
-            expired = client.post(
-                "/verify-otp",
-                data={"email_otp": old_email_code},
-                follow_redirects=True,
-            )
-            self.assertIn("verification code expired", expired.get_data(as_text=True).lower())
-
-            self.assertEqual(client.post("/verify-otp/resend").status_code, 302)
-            self.assertEqual(send_email.call_count, 2)
-            new_email_code = re.search(r"code is (\d{6})", send_email.call_args.args[2]).group(1)
-            self.assertNotEqual(new_email_code, old_email_code)
-            old_rejected = client.post(
-                "/verify-otp",
-                data={"email_otp": old_email_code},
-                follow_redirects=True,
-            )
-            self.assertIn("Incorrect email verification code.", old_rejected.get_data(as_text=True))
-            accepted = client.post(
-                "/verify-otp",
-                data={"email_otp": new_email_code},
-            )
-            self.assertEqual(accepted.status_code, 302)
-            conn = dbh.get_db()
-            challenge = conn.execute(
-                "SELECT email_otp_hash, used_at FROM admin_otp_challenges WHERE user_id=?",
-                (admin_id,),
-            ).fetchone()
-            conn.close()
-            self.assertIsNone(challenge["email_otp_hash"])
-            self.assertIsNotNone(challenge["used_at"])
-
-    def test_resident_login_uses_email_code_without_mobile_or_sms(self):
-        email = "mfa-resident@example.test"
+    def test_registration_smtp_failure_leaves_account_unverified_and_resend_works(self):
+        email = "registration-delivery-failure@example.test"
+        client = A.app.test_client()
+        with patch.dict(os.environ, {"REGISTRATION_OTP_RESEND_SECONDS": "1"}), \
+                patch.object(
+                    A.email_service,
+                    "send_email",
+                    side_effect=A.email_service.EmailConfigurationError("SMTP not configured"),
+                ):
+            response = client.post("/register", data={
+                "full_name": "Pending Resident",
+                "email": email,
+                "password": "Resident@1234",
+                "confirm_password": "Resident@1234",
+                "address": "Purok 4",
+            }, follow_redirects=True)
+        self.assertIn("email verification could not be sent", response.get_data(as_text=True).lower())
         conn = dbh.get_db()
-        resident_id = conn.execute(
-            "INSERT INTO users (full_name,email,password_hash,role) VALUES (?,?,?,'resident')",
-            ("MFA Resident", email, generate_password_hash("Resident@1234")),
-        ).lastrowid
+        user = conn.execute(
+            "SELECT id,email_verified FROM users WHERE email=?", (email,)
+        ).fetchone()
+        self.assertEqual(user["email_verified"], 0)
+        conn.execute(
+            "UPDATE registration_email_verifications SET sent_at=? WHERE user_id=?",
+            ((datetime.now() - timedelta(seconds=2)).isoformat(), user["id"]),
+        )
         conn.commit()
         conn.close()
-        client = A.app.test_client()
-
-        with patch.object(A.email_service, "send_email") as send_email:
+        self.assertEqual(
+            client.post("/login", data={"email": email, "password": "Resident@1234"}).status_code,
+            403,
+        )
+        with patch.dict(os.environ, {"REGISTRATION_OTP_RESEND_SECONDS": "1"}), \
+                patch.object(A.email_service, "send_email") as send_email:
             response = client.post(
-                "/login", data={"email": email, "password": "Resident@1234"}
+                "/verify-registration/resend", follow_redirects=True
             )
-            self.assertEqual(response.status_code, 302)
-            self.assertIn("/verify-otp", response.location)
-            email_code = re.search(
-                r"code is (\d{6})", send_email.call_args.args[2]
-            ).group(1)
-            page = client.get("/verify-otp").get_data(as_text=True)
-            self.assertIn("email address", page)
-            self.assertNotIn("SMS", page)
-            verified = client.post("/verify-otp", data={"email_otp": email_code})
-            self.assertEqual(verified.status_code, 302)
-            self.assertEqual(verified.location, "/dashboard")
-            with client.session_transaction() as session:
-                self.assertEqual(session["user_id"], resident_id)
-                self.assertEqual(session["role"], "resident")
+        self.assertEqual(send_email.call_count, 1)
+        code = re.search(r"is (\d{6})", send_email.call_args.args[2]).group(1)
+        self.assertEqual(
+            client.post("/verify-registration", data={"email_otp": code}).location,
+            "/login",
+        )
+        conn = dbh.get_db()
+        self.assertEqual(conn.execute(
+            "SELECT email_verified FROM users WHERE id=?", (user["id"],)
+        ).fetchone()["email_verified"], 1)
+        conn.close()
 
-    def test_founding_admin_otp_is_followed_by_required_password_change(self):
+    def test_resident_staff_and_admin_login_without_otp(self):
+        accounts = (
+            ("mfa-resident@example.test", "resident", None, "/dashboard"),
+            ("mfa-staff@example.test", "staff", "bpso", "/staff/dashboard"),
+            ("mfa-admin@example.test", "admin", None, "/admin/dashboard"),
+        )
+        conn = dbh.get_db()
+        user_ids = {}
+        for email, role, office, _ in accounts:
+            user_ids[email] = conn.execute(
+                "INSERT INTO users (full_name,email,password_hash,role,office) VALUES (?,?,?,?,?)",
+                (role.title(), email, generate_password_hash("Resident@1234"), role, office),
+            ).lastrowid
+        conn.commit()
+        conn.close()
+        with patch.object(A.email_service, "send_email") as send_email:
+            for email, _, _, destination in accounts:
+                client = A.app.test_client()
+                response = client.post(
+                    "/login", data={"email": email, "password": "Resident@1234"}
+                )
+                self.assertEqual(response.location, destination)
+                self.assertEqual(send_email.call_count, 0)
+                with client.session_transaction() as session:
+                    self.assertEqual(session["user_id"], user_ids[email])
+        rejected = A.app.test_client().post(
+            "/login", data={"email": accounts[0][0], "password": "wrong"}
+        )
+        self.assertEqual(rejected.status_code, 200)
+        routes = {rule.rule for rule in A.app.url_map.iter_rules()}
+        self.assertNotIn("/verify-otp", routes)
+        self.assertNotIn("/verify-otp/resend", routes)
+
+    def test_founding_admin_direct_login_still_requires_initial_password_change(self):
         email = "test-admin@example.test"
         conn = dbh.get_db()
         conn.execute(
@@ -420,17 +538,9 @@ class SecurityAndAllowanceTests(unittest.TestCase):
                 "/login",
                 data={"email": email, "password": "Admin@1234"},
             )
-            self.assertEqual(response.status_code, 302)
-            self.assertEqual(send_email.call_args.args[0], email)
-            email_code = re.search(r"code is (\d{6})", send_email.call_args.args[2]).group(1)
-
-            verified = client.post(
-                "/verify-otp",
-                data={"email_otp": email_code},
-            )
-            self.assertEqual(verified.status_code, 302)
-            self.assertIn("/first-login-reset", verified.location)
-            self.assertEqual(client.get("/first-login-reset").status_code, 200)
+        self.assertEqual(response.location, "/first-login-reset")
+        send_email.assert_not_called()
+        self.assertEqual(client.get("/first-login-reset").status_code, 200)
 
         password = "NewFoundingPassword@123"
         response = client.post(
@@ -468,11 +578,15 @@ class SecurityAndAllowanceTests(unittest.TestCase):
         conn.close()
 
         client = A.app.test_client()
-        with patch.object(A.email_service, "send_email") as send_email:
+        with patch.dict(os.environ, {"APP_BASE_URL": "https://barangayconnect.example.test"}), \
+                patch.object(A.email_service, "send_email") as send_email:
             response = client.post("/forgot-password", data={"email": login_email})
             self.assertEqual(response.status_code, 302)
             self.assertEqual(send_email.call_args.args[0], login_email)
-            reset_url = re.search(r"http://localhost/reset-password/\S+", send_email.call_args.args[2]).group(0)
+            reset_url = re.search(
+                r"https://barangayconnect\.example\.test/reset-password/\S+",
+                send_email.call_args.args[2],
+            ).group(0)
 
         password = "RecoveredAdminPassword@123"
         response = client.post(

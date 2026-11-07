@@ -248,7 +248,7 @@ def run():
     print("TEST ACCOUNTS (passwords supplied via environment variables)")
     print("=" * 60)
     print(f"{'Role':<10} {'Email':<32} {'Password'}")
-    print(f"{'Admin':<10} {'admin@barangayconnect.ph':<32} DEMO_ADMIN_PASSWORD (+ email OTP; SMTP required)")
+    print(f"{'Admin':<10} {'admin@barangayconnect.ph':<32} DEMO_ADMIN_PASSWORD")
     for name, email, office in staff_defs:
         print(f"{'Staff':<10} {email:<32} DEMO_STAFF_PASSWORD  ({office_labels[office]})")
     for name, email, *_ in resident_defs:

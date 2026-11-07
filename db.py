@@ -57,6 +57,17 @@ def migrate_db():
             window_started_at TEXT,
             sends_in_window INTEGER NOT NULL DEFAULT 0
         );
+        CREATE TABLE IF NOT EXISTS registration_email_verifications (
+            user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+            otp_hash TEXT,
+            expires_at TEXT NOT NULL,
+            sent_at TEXT,
+            attempts INTEGER NOT NULL DEFAULT 0,
+            window_started_at TEXT,
+            sends_in_window INTEGER NOT NULL DEFAULT 0,
+            used_at TEXT,
+            created_at TEXT NOT NULL
+        );
         CREATE TABLE IF NOT EXISTS admin_otp_challenges (
             user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
             email_otp_hash TEXT,
@@ -147,6 +158,10 @@ def migrate_db():
                 "WHERE role='admin' AND address LIKE 'recovery:%' "
                 "AND recovery_email IS NULL"
             )
+    if "email_verified" not in user_cols:
+        conn.execute(
+            "ALTER TABLE users ADD COLUMN email_verified INTEGER NOT NULL DEFAULT 1"
+        )
     founder_count = conn.execute(
         "SELECT COUNT(*) FROM users WHERE role='admin' AND is_super_admin=1"
     ).fetchone()[0]

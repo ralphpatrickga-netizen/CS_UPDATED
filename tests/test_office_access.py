@@ -830,6 +830,9 @@ class MigrationTests(unittest.TestCase):
         c = sqlite3.connect(path)
         offices = dict(c.execute("SELECT id, office FROM users").fetchall())
         user_cols = {r[1] for r in c.execute("PRAGMA table_info(users)")}
+        email_verified = c.execute(
+            "SELECT email_verified FROM users WHERE id=5"
+        ).fetchone()[0]
         otp_cols = {r[1] for r in c.execute("PRAGMA table_info(admin_otp_challenges)")}
         cols = [r[1] for r in c.execute("PRAGMA table_info(requests)")]
         tables = {r[0] for r in c.execute("SELECT name FROM sqlite_master WHERE type='table'")}
@@ -840,10 +843,13 @@ class MigrationTests(unittest.TestCase):
         self.assertEqual(offices[4], "secretary")
         self.assertIsNone(offices[5])
         self.assertIn("contact_number", user_cols)
+        self.assertIn("email_verified", user_cols)
+        self.assertEqual(email_verified, 1)
         self.assertTrue({"email_otp_hash", "mode", "expires_at"}.issubset(otp_cols))
         self.assertNotIn("sms_otp_hash", otp_cols)
         self.assertIn("registered_voter", cols)
         self.assertIn("password_reset_codes", tables)
+        self.assertIn("registration_email_verifications", tables)
 
 
 if __name__ == "__main__":

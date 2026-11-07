@@ -2,7 +2,7 @@
 Safely provision the single Founding Administrator.
 
 The initial password is read only from FOUNDING_ADMIN_PASSWORD. It is hashed
-before it is written, and the account must change it after email OTP login.
+before it is written, and the account must change it on first login.
 """
 
 import os
@@ -141,7 +141,7 @@ def setup_founding_admin():
         conn.commit()
         print("[SETUP] Founding Admin account configured and verified.")
         print("[SETUP] Email and recovery email are set to the designated address.")
-        print("[SETUP] The initial password must be changed after email OTP login.")
+        print("[SETUP] The initial password must be changed on first login.")
     finally:
         if conn.in_transaction:
             conn.rollback()

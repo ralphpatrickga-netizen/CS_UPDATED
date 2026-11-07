@@ -9,6 +9,7 @@ import threading
 from functools import wraps
 from datetime import datetime, timedelta
 import random
+from html import escape as html_escape
 from urllib.parse import urlsplit
 
 from flask import (
@@ -231,8 +232,13 @@ def _password_reset_link(token):
     base_url = (
         os.environ.get("APP_BASE_URL", "").strip()
         or os.environ.get("RENDER_EXTERNAL_URL", "").strip()
-        or request.url_root
     )
+    if not base_url and (app.testing or app.debug):
+        base_url = request.url_root
+    elif not base_url:
+        raise email_service.EmailConfigurationError(
+            "APP_BASE_URL must be configured for password-reset email."
+        )
     try:
         parsed = urlsplit(base_url)
         hostname = (parsed.hostname or "").lower()
@@ -249,6 +255,10 @@ def _password_reset_link(token):
     ):
         raise email_service.EmailConfigurationError(
             "APP_BASE_URL must be a public HTTPS origin."
+        )
+    if hostname in {"localhost", "127.0.0.1", "::1"} and not (app.testing or app.debug):
+        raise email_service.EmailConfigurationError(
+            "A localhost reset URL cannot be used for production email."
         )
     return base_url.rstrip("/") + url_for("reset_password", token=token)
 
@@ -337,15 +347,16 @@ def restore_resolved_concern_slot(conn, complaint, now=None):
     return bool(restored)
 
 
-def issue_login_otp(user, now=None):
+def issue_registration_otp(user, now=None):
     now = now or datetime.now()
-    ttl_minutes = configured_minutes("ADMIN_OTP_TTL_MINUTES", 5)
-    resend_seconds = configured_minutes("ADMIN_OTP_RESEND_SECONDS", 60)
-    max_sends = configured_minutes("ADMIN_OTP_MAX_SENDS_PER_HOUR", 5)
+    ttl_minutes = configured_minutes("REGISTRATION_OTP_TTL_MINUTES", 10)
+    resend_seconds = configured_minutes("REGISTRATION_OTP_RESEND_SECONDS", 60)
+    max_sends = configured_minutes("REGISTRATION_OTP_MAX_SENDS_PER_HOUR", 5)
     conn = dbh.get_db()
     conn.execute("BEGIN IMMEDIATE")
     row = conn.execute(
-        "SELECT * FROM admin_otp_challenges WHERE user_id=?", (user["id"],)
+        "SELECT * FROM registration_email_verifications WHERE user_id=?",
+        (user["id"],),
     ).fetchone()
     window_started = _timestamp(row["window_started_at"]) if row else None
     sent_at = _timestamp(row["sent_at"]) if row else None
@@ -369,19 +380,20 @@ def issue_login_otp(user, now=None):
     email_code = f"{secrets.randbelow(1_000_000):06d}"
     expires_at = now + timedelta(minutes=ttl_minutes)
     conn.execute(
-        "INSERT INTO admin_otp_challenges "
-        "(user_id, email_otp_hash, mode, expires_at, sent_at, attempts, "
-        "window_started_at, sends_in_window, used_at) "
-        "VALUES (?,?,?,?,?,0,?,?,NULL) ON CONFLICT(user_id) DO UPDATE SET "
-        "email_otp_hash=excluded.email_otp_hash, mode=excluded.mode, "
-        "expires_at=excluded.expires_at, "
+        "INSERT INTO registration_email_verifications "
+        "(user_id,otp_hash,expires_at,sent_at,attempts,window_started_at,"
+        "sends_in_window,used_at,created_at) "
+        "VALUES (?,?,?,?,0,?,?,NULL,?) ON CONFLICT(user_id) DO UPDATE SET "
+        "otp_hash=excluded.otp_hash, expires_at=excluded.expires_at, "
         "sent_at=excluded.sent_at, "
         "attempts=0, window_started_at=excluded.window_started_at, "
-        "sends_in_window=excluded.sends_in_window, used_at=NULL",
+        "sends_in_window=excluded.sends_in_window, used_at=NULL, "
+        "created_at=excluded.created_at",
         (
-            user["id"], _otp_digest(email_code), "email_only",
+            user["id"], _otp_digest(email_code),
             expires_at.isoformat(timespec="seconds"), now.isoformat(timespec="seconds"),
             window_started.isoformat(timespec="seconds"), sends + 1,
+            now.isoformat(timespec="seconds"),
         ),
     )
     conn.commit()
@@ -389,12 +401,12 @@ def issue_login_otp(user, now=None):
 
     try:
         message = (
-            f"Your BarangayConnect email verification code is {email_code}.\n\n"
+            f"Your BarangayConnect account verification code is {email_code}.\n\n"
             f"It expires in {ttl_minutes} minutes. If you did not request this code, "
             "you can ignore this email."
         )
         email_service.send_email(
-            user["email"], "BarangayConnect email verification code", message
+            user["email"], "Verify your BarangayConnect account", message
         )
     except (
         email_service.EmailConfigurationError,
@@ -405,8 +417,8 @@ def issue_login_otp(user, now=None):
     ):
         conn = dbh.get_db()
         conn.execute(
-            "UPDATE admin_otp_challenges SET email_otp_hash=NULL, "
-            "expires_at=?, used_at=? WHERE user_id=? AND email_otp_hash=?",
+            "UPDATE registration_email_verifications SET otp_hash=NULL, "
+            "expires_at=?, used_at=? WHERE user_id=? AND otp_hash=?",
             (
                 now.isoformat(timespec="seconds"), now.isoformat(timespec="seconds"),
                 user["id"], _otp_digest(email_code),
@@ -418,17 +430,17 @@ def issue_login_otp(user, now=None):
     return True, 0
 
 
-def otp_page_context(conn, user_id, now=None):
+def registration_otp_page_context(conn, user_id, now=None):
     now = now or datetime.now()
     row = conn.execute(
-        "SELECT expires_at, sent_at FROM admin_otp_challenges WHERE user_id=?",
+        "SELECT expires_at, sent_at FROM registration_email_verifications WHERE user_id=?",
         (user_id,),
     ).fetchone()
     if not row:
         return {"otp_expires_in": 0, "otp_resend_wait": 0}
     expires_at = _timestamp(row["expires_at"])
     sent_at = _timestamp(row["sent_at"])
-    resend_seconds = configured_minutes("ADMIN_OTP_RESEND_SECONDS", 60)
+    resend_seconds = configured_minutes("REGISTRATION_OTP_RESEND_SECONDS", 60)
     return {
         "otp_expires_in": max(0, int((expires_at - now).total_seconds())) if expires_at else 0,
         "otp_resend_wait": max(
@@ -907,10 +919,12 @@ def register():
             errors.append("Enter a valid Philippine mobile number, such as 0917 123 4567.")
 
         conn = dbh.get_db()
+        conn.execute("BEGIN IMMEDIATE")
         if not errors and conn.execute("SELECT id FROM users WHERE email=?", (email,)).fetchone():
             errors.append("An account with this email already exists.")
 
         if errors:
+            conn.rollback()
             conn.close()
             for e in errors:
                 flash(e, "error")
@@ -918,21 +932,174 @@ def register():
 
         pw_hash = generate_password_hash(password)
         cur = conn.execute(
-            "INSERT INTO users (full_name, email, password_hash, role, address, contact_number) "
-            "VALUES (?,?,?,?,?,?)",
+            "INSERT INTO users (full_name, email, password_hash, role, address, contact_number, email_verified) "
+            "VALUES (?,?,?,?,?,?,0)",
             (full_name, email, pw_hash, "resident", address, contact),
         )
+        user_id = cur.lastrowid
         conn.execute(
             "INSERT INTO resident_concern_allowances (user_id, remaining) VALUES (?,?)",
-            (cur.lastrowid, COMPLAINT_ALLOWANCE_MAX),
+            (user_id, COMPLAINT_ALLOWANCE_MAX),
         )
-        dbh.log_action(conn, {"id": cur.lastrowid, "full_name": full_name}, "Resident self-registered", target=email)
+        dbh.log_action(
+            conn,
+            {"id": user_id, "full_name": full_name},
+            "Resident self-registered; email verification pending",
+            target=email,
+        )
         conn.commit()
+        user = conn.execute("SELECT * FROM users WHERE id=?", (user_id,)).fetchone()
         conn.close()
-        flash("Account created successfully. You can now log in.", "success")
-        return redirect(url_for("login"))
+        session["pending_registration_user"] = user_id
+        try:
+            issue_registration_otp(user)
+        except (
+            email_service.EmailConfigurationError,
+            email_service.smtplib.SMTPException,
+            OSError,
+            ValueError,
+            RuntimeError,
+        ) as exc:
+            app.logger.error(
+                "Registration verification email failed (type=%s, smtp_code=%s).",
+                type(exc).__name__,
+                getattr(exc, "smtp_code", None),
+            )
+            flash(
+                "Your account was created but email verification could not be sent. "
+                "Check the mail configuration or try sending the code again.",
+                "error",
+            )
+        else:
+            flash("A verification code was sent to your email address.", "info")
+        return redirect(url_for("verify_registration"))
 
     return render_template("register.html", form={})
+
+
+@app.route("/verify-registration", methods=["GET", "POST"])
+def verify_registration():
+    user_id = session.get("pending_registration_user")
+    if not user_id:
+        return redirect(url_for("register"))
+
+    conn = dbh.get_db()
+    user = conn.execute(
+        "SELECT id,full_name,email,email_verified,status FROM users "
+        "WHERE id=? AND role='resident'",
+        (user_id,),
+    ).fetchone()
+    if not user or user["status"] != "active":
+        conn.close()
+        session.pop("pending_registration_user", None)
+        return redirect(url_for("register"))
+    if user["email_verified"]:
+        conn.close()
+        session.pop("pending_registration_user", None)
+        flash("This email address is already verified. You can log in.", "info")
+        return redirect(url_for("login"))
+
+    if request.method == "POST":
+        code = request.form.get("email_otp", "").strip()
+        conn.execute("BEGIN IMMEDIATE")
+        verification = conn.execute(
+            "SELECT * FROM registration_email_verifications WHERE user_id=?",
+            (user_id,),
+        ).fetchone()
+        now = datetime.now()
+        expires_at = _timestamp(verification["expires_at"]) if verification else None
+        if (
+            not verification
+            or not verification["otp_hash"]
+            or verification["used_at"]
+            or not expires_at
+            or now >= expires_at
+        ):
+            conn.rollback()
+            conn.close()
+            flash("The verification code is invalid or expired. Request a new code.", "error")
+            return redirect(url_for("verify_registration"))
+        if verification["attempts"] >= 5:
+            conn.rollback()
+            conn.close()
+            flash("Too many incorrect attempts. Request a new verification code.", "error")
+            return redirect(url_for("verify_registration"))
+        if not (len(code) == 6 and code.isdigit() and hmac.compare_digest(
+            _otp_digest(code), verification["otp_hash"]
+        )):
+            conn.execute(
+                "UPDATE registration_email_verifications SET attempts=attempts+1 WHERE user_id=?",
+                (user_id,),
+            )
+            conn.commit()
+            conn.close()
+            flash("Incorrect email verification code.", "error")
+            return redirect(url_for("verify_registration"))
+
+        timestamp = now.isoformat(timespec="seconds")
+        conn.execute(
+            "UPDATE users SET email_verified=1 WHERE id=? AND role='resident' "
+            "AND status='active' AND email_verified=0",
+            (user_id,),
+        )
+        if conn.execute("SELECT changes()").fetchone()[0] != 1:
+            conn.rollback()
+            conn.close()
+            session.pop("pending_registration_user", None)
+            flash("This account cannot be verified. Please contact the barangay office.", "error")
+            return redirect(url_for("login"))
+        conn.execute(
+            "UPDATE registration_email_verifications SET otp_hash=NULL,used_at=? WHERE user_id=?",
+            (timestamp, user_id),
+        )
+        dbh.log_action(conn, user, "Resident email verified")
+        conn.commit()
+        conn.close()
+        session.pop("pending_registration_user", None)
+        flash("Email verified. You can now log in.", "success")
+        return redirect(url_for("login"))
+
+    context = registration_otp_page_context(conn, user_id)
+    conn.close()
+    return render_template("verify_registration.html", email=user["email"], **context)
+
+
+@app.route("/verify-registration/resend", methods=["POST"])
+def resend_registration_otp():
+    user_id = session.get("pending_registration_user")
+    if not user_id:
+        return redirect(url_for("register"))
+    conn = dbh.get_db()
+    user = conn.execute(
+        "SELECT * FROM users WHERE id=? AND role='resident' "
+        "AND status='active' AND email_verified=0",
+        (user_id,),
+    ).fetchone()
+    conn.close()
+    if not user:
+        session.pop("pending_registration_user", None)
+        return redirect(url_for("login"))
+    try:
+        sent, wait_seconds = issue_registration_otp(user)
+    except (
+        email_service.EmailConfigurationError,
+        email_service.smtplib.SMTPException,
+        OSError,
+        ValueError,
+        RuntimeError,
+    ) as exc:
+        app.logger.error(
+            "Registration verification resend failed (type=%s, smtp_code=%s).",
+            type(exc).__name__,
+            getattr(exc, "smtp_code", None),
+        )
+        flash("We could not send the verification code. Check email configuration and try again.", "error")
+    else:
+        if sent:
+            flash("A new verification code was sent.", "success")
+        else:
+            flash(f"Please wait {wait_seconds} seconds before requesting another code.", "error")
+    return redirect(url_for("verify_registration"))
 
 
 @app.route("/login", methods=["GET", "POST"])
@@ -941,7 +1108,6 @@ def login():
         user = current_user()
         if user:
             return redirect(url_for(f"{user['role']}_dashboard"))
-    session.pop("pending_mfa_user", None)
     session.pop("pending_reset_user", None)
 
     if request.method == "POST":
@@ -969,159 +1135,22 @@ def login():
                 flash("Invalid credentials.", "error")
             return render_template("login.html")
 
-        dbh.clear_failed_logins(conn, user["id"])
+        if not user["email_verified"]:
+            conn.close()
+            flash("Please verify your email address before logging in.", "error")
+            return render_template("login.html"), 403
 
+        dbh.clear_failed_logins(conn, user["id"])
         conn.close()
 
-        try:
-            sent, wait_seconds = issue_login_otp(user)
-        except (
-            email_service.EmailConfigurationError,
-            email_service.smtplib.SMTPException,
-            OSError,
-            ValueError,
-            RuntimeError,
-        ):
-            app.logger.exception("Could not deliver login verification code.")
-            flash(
-                "We could not deliver the verification code. Check the email configuration and try again.",
-                "error",
-            )
-            return render_template("login.html"), 503
-        challenge_conn = dbh.get_db()
-        challenge = challenge_conn.execute(
-            "SELECT expires_at, email_otp_hash "
-            "FROM admin_otp_challenges WHERE user_id=?", (user["id"],)
-        ).fetchone()
-        challenge_conn.close()
-        if not sent and (
-            not challenge
-            or not _timestamp(challenge["expires_at"])
-            or _timestamp(challenge["expires_at"]) <= datetime.now()
-            or not challenge["email_otp_hash"]
-        ):
-            flash(
-                f"Please wait {wait_seconds} seconds before requesting another verification code.",
-                "error",
-            )
-            return render_template("login.html"), 429
-        session["pending_mfa_user"] = user["id"]
-        if sent:
-            flash("An email verification code was sent.", "success")
-        else:
-            flash("A valid email code was recently sent. Check your email or wait before requesting another.", "info")
-        return redirect(url_for("verify_otp"))
+        if user["must_reset_pw"]:
+            session["pending_reset_user"] = user["id"]
+            return redirect(url_for("first_login_reset"))
+        session["user_id"] = user["id"]
+        session["role"] = user["role"]
+        return redirect(url_for(f"{user['role']}_dashboard"))
 
     return render_template("login.html")
-
-
-@app.route("/verify-otp", methods=["GET", "POST"])
-def verify_otp():
-    if "pending_mfa_user" not in session:
-        return redirect(url_for("login"))
-    user_id = session["pending_mfa_user"]
-    if request.method == "POST":
-        email_code = request.form.get("email_otp", "").strip()
-        conn = dbh.get_db()
-        conn.execute("BEGIN IMMEDIATE")
-        challenge = conn.execute(
-            "SELECT * FROM admin_otp_challenges WHERE user_id=?", (user_id,)
-        ).fetchone()
-        now = datetime.now()
-        if not challenge or challenge["used_at"] or not challenge["email_otp_hash"]:
-            conn.rollback()
-            conn.close()
-            flash("No active verification code. Request a new code.", "error")
-            return redirect(url_for("verify_otp"))
-        expires_at = _timestamp(challenge["expires_at"])
-        if not expires_at or now >= expires_at:
-            conn.rollback()
-            conn.close()
-            flash("The verification code expired. Request a new code.", "error")
-            return redirect(url_for("verify_otp"))
-        if challenge["attempts"] >= 5:
-            conn.rollback()
-            conn.close()
-            flash("Too many incorrect attempts. Request a new code.", "error")
-            return redirect(url_for("verify_otp"))
-        email_valid = bool(
-            challenge["email_otp_hash"]
-            and len(email_code) == 6 and email_code.isdigit()
-            and hmac.compare_digest(_otp_digest(email_code), challenge["email_otp_hash"])
-        )
-        if not email_valid:
-            conn.execute(
-                "UPDATE admin_otp_challenges SET attempts=attempts+1 WHERE user_id=?",
-                (user_id,),
-            )
-            conn.commit()
-            conn.close()
-            flash("Incorrect email verification code.", "error")
-            return redirect(url_for("verify_otp"))
-        verified_user = conn.execute(
-            "SELECT id, role, must_reset_pw "
-            "FROM users WHERE id=? AND status='active'",
-            (user_id,),
-        ).fetchone()
-        if not verified_user:
-            conn.execute(
-                "UPDATE admin_otp_challenges SET email_otp_hash=NULL, used_at=? WHERE user_id=?",
-                (now.isoformat(timespec="seconds"), user_id),
-            )
-            conn.commit()
-            conn.close()
-            session.pop("pending_mfa_user", None)
-            flash("This account is no longer active.", "error")
-            return redirect(url_for("login"))
-        conn.execute(
-            "UPDATE admin_otp_challenges SET email_otp_hash=NULL, used_at=? WHERE user_id=?",
-            (now.isoformat(timespec="seconds"), user_id),
-        )
-        conn.commit()
-        conn.close()
-        session.pop("pending_mfa_user", None)
-        if verified_user["must_reset_pw"]:
-            session["pending_reset_user"] = user_id
-            return redirect(url_for("first_login_reset"))
-        session["user_id"] = user_id
-        session["role"] = verified_user["role"]
-        return redirect(url_for(f"{verified_user['role']}_dashboard"))
-    conn = dbh.get_db()
-    context = otp_page_context(conn, user_id)
-    conn.close()
-    return render_template("verify_otp.html", **context)
-
-
-@app.route("/verify-otp/resend", methods=["POST"])
-def resend_admin_otp():
-    user_id = session.get("pending_mfa_user")
-    if not user_id:
-        return redirect(url_for("login"))
-    conn = dbh.get_db()
-    user = conn.execute(
-        "SELECT * FROM users WHERE id=? AND status='active'", (user_id,)
-    ).fetchone()
-    conn.close()
-    if not user:
-        session.pop("pending_mfa_user", None)
-        return redirect(url_for("login"))
-    try:
-        sent, wait_seconds = issue_login_otp(user)
-    except (
-        email_service.EmailConfigurationError,
-        email_service.smtplib.SMTPException,
-        OSError,
-        ValueError,
-        RuntimeError,
-    ):
-        app.logger.exception("Could not redeliver login verification code.")
-        flash("We could not deliver a new verification code. Check the email configuration and try again.", "error")
-    else:
-        if sent:
-            flash("A new verification code was sent. The previous code is no longer valid.", "success")
-        else:
-            flash(f"Please wait {wait_seconds} seconds before requesting another code.", "error")
-    return redirect(url_for("verify_otp"))
 
 
 @app.route("/first-login-reset", methods=["GET", "POST"])
@@ -1178,20 +1207,35 @@ def first_login_reset():
 @app.route("/forgot-password", methods=["GET", "POST"])
 def forgot_password():
     if request.method == "POST":
+        app.logger.info("Password reset request received.")
         email = request.form.get("email", "").strip().lower()
         if not valid_email(email):
+            app.logger.info("Password reset email validation failed.")
             flash("Please enter a valid email address.", "error")
             return render_template("forgot_password.html", email=email), 400
+        reset_requested_url = url_for("forgot_password", requested=1)
         conn = dbh.get_db()
         conn.execute("BEGIN IMMEDIATE")
         user = conn.execute(
-            "SELECT * FROM users WHERE email=? AND status='active'",
+            "SELECT * FROM users WHERE email=? AND status='active' AND email_verified=1",
             (email,),
         ).fetchone()
+        app.logger.info(
+            "Password reset account lookup completed (active_account_found=%s).",
+            bool(user),
+        )
         if user:
             rate = conn.execute(
                 "SELECT * FROM password_reset_limits WHERE user_id=?", (user["id"],)
             ).fetchone()
+            previous_limit = (
+                (
+                    rate["last_sent_at"],
+                    rate["window_started_at"],
+                    rate["sends_in_window"],
+                )
+                if rate else None
+            )
             now = datetime.now()
             window_started = _timestamp(rate["window_started_at"]) if rate else None
             last_sent = _timestamp(rate["last_sent_at"]) if rate else None
@@ -1209,20 +1253,15 @@ def forgot_password():
             if sends >= max_sends or wait_seconds:
                 conn.rollback()
                 conn.close()
-                flash(
-                    "If that address belongs to an active account and email delivery is available, "
-                    "a reset link will arrive shortly. "
-                    "If no email arrives, contact the barangay office.",
-                    "info",
-                )
-                return redirect(url_for("forgot_password"))
+                return redirect(reset_requested_url)
+            limit_sent_at = now.isoformat(timespec="seconds")
             conn.execute(
                 "INSERT INTO password_reset_limits (user_id,last_sent_at,window_started_at,sends_in_window) "
                 "VALUES (?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET "
                 "last_sent_at=excluded.last_sent_at, window_started_at=excluded.window_started_at, "
                 "sends_in_window=excluded.sends_in_window",
                 (
-                    user["id"], now.isoformat(timespec="seconds"),
+                    user["id"], limit_sent_at,
                     window_started.isoformat(timespec="seconds"), sends + 1,
                 ),
             )
@@ -1239,20 +1278,49 @@ def forgot_password():
             )
             token_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
             conn.commit()
+            app.logger.info("Password reset token generated and stored as a digest.")
         conn.close()
         if user:
             try:
                 reset_url = _password_reset_link(token)
+                app.logger.info("Password reset URL generated.")
+                reset_url_html = html_escape(reset_url, quote=True)
+                html_body = (
+                    "<div style=\"font-family:Arial,sans-serif;max-width:560px;margin:0 auto;color:#172b4d\">"
+                    "<h1 style=\"color:#12345a\">BarangayConnect</h1>"
+                    "<h2>Password reset request</h2>"
+                    "<p>We received a request to reset the password for your BarangayConnect account.</p>"
+                    f"<p><a href=\"{reset_url_html}\" style=\"display:inline-block;background:#087f9b;color:#fff;"
+                    "padding:12px 22px;border-radius:6px;text-decoration:none;font-weight:bold\">"
+                    "Reset Password</a></p>"
+                    "<p>This link expires in "
+                    f"{configured_minutes('PASSWORD_RESET_TTL_MINUTES', 30)} minutes and can only be used once.</p>"
+                    "<p>If you did not request this change, you can ignore this email.</p>"
+                    "</div>"
+                )
+                app.logger.info("Password reset email sending attempted.")
                 email_service.send_email(
                     user["email"],
-                    "Reset your BarangayConnect password",
+                    "BarangayConnect - Password Reset Request",
                     "Use the secure link below to choose a new password:\n\n"
                     f"{reset_url}\n\nThis link expires in "
                     f"{configured_minutes('PASSWORD_RESET_TTL_MINUTES', 30)} minutes and can only be used once.\n\n"
                     "If you did not request a reset, you can ignore this email.",
+                    html_body=html_body,
                 )
             except (email_service.EmailConfigurationError, email_service.smtplib.SMTPException, OSError, ValueError) as exc:
-                detail = str(exc) if isinstance(exc, email_service.EmailConfigurationError) else ""
+                if isinstance(exc, email_service.EmailConfigurationError):
+                    detail = str(exc)
+                elif isinstance(exc, email_service.smtplib.SMTPAuthenticationError):
+                    detail = "SMTP server rejected authentication."
+                elif isinstance(exc, email_service.smtplib.SMTPConnectError):
+                    detail = "SMTP server rejected the connection."
+                elif isinstance(exc, email_service.smtplib.SMTPResponseException):
+                    detail = "SMTP server returned an error response."
+                elif isinstance(exc, OSError):
+                    detail = "Network or TLS connection to the SMTP server failed."
+                else:
+                    detail = "SMTP email submission failed."
                 smtp_code = getattr(exc, "smtp_code", None)
                 app.logger.error(
                     "Password reset email delivery failed (type=%s, smtp_code=%s, detail=%s).",
@@ -1265,6 +1333,17 @@ def forgot_password():
                     "UPDATE password_reset_tokens SET used_at=? WHERE id=? AND used_at IS NULL",
                     (datetime.now().isoformat(timespec="seconds"), token_id),
                 )
+                if previous_limit:
+                    conn.execute(
+                        "UPDATE password_reset_limits SET last_sent_at=?,window_started_at=?,"
+                        "sends_in_window=? WHERE user_id=? AND last_sent_at=?",
+                        (*previous_limit, user["id"], limit_sent_at),
+                    )
+                else:
+                    conn.execute(
+                        "DELETE FROM password_reset_limits WHERE user_id=? AND last_sent_at=?",
+                        (user["id"], limit_sent_at),
+                    )
                 conn.commit()
                 conn.close()
             else:
@@ -1283,14 +1362,14 @@ def forgot_password():
                 dbh.log_action(conn, user, "Password reset email sent")
                 conn.commit()
                 conn.close()
-        flash(
-            "If that address belongs to an active account and email delivery is available, "
-            "a reset link will arrive shortly. "
-            "If no email arrives, contact the barangay office.",
-            "info",
-        )
-        return redirect(url_for("forgot_password"))
-    return render_template("forgot_password.html")
+                app.logger.info(
+                    "SMTP accepted password reset message for submission; inbox delivery is not confirmed."
+                )
+        return redirect(reset_requested_url)
+    return render_template(
+        "forgot_password.html",
+        requested=request.args.get("requested") == "1",
+    )
 
 
 @app.route("/reset-password", methods=["GET", "POST"])
@@ -1359,6 +1438,7 @@ def reset_password(token):
         dbh.log_action(conn, user, "Password reset using emailed link")
         conn.commit()
         conn.close()
+        app.logger.info("Password reset completed.")
         flash("Your password was changed. You can now log in.", "success")
         return redirect(url_for("login"))
     conn.close()

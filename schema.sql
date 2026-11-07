@@ -21,7 +21,8 @@ CREATE TABLE IF NOT EXISTS users (
     created_at      TEXT NOT NULL DEFAULT (datetime('now')),
     created_by      INTEGER,              -- admin who created this account (staff/admin), NULL for self-registered residents
     profile_picture TEXT,                 -- stored filename of uploaded profile photo, NULL if none
-    recovery_email  TEXT
+    recovery_email  TEXT,
+    email_verified  INTEGER NOT NULL DEFAULT 1
 );
 
 CREATE UNIQUE INDEX IF NOT EXISTS idx_users_single_founding_admin
@@ -194,6 +195,18 @@ CREATE TABLE IF NOT EXISTS password_reset_limits (
     last_sent_at        TEXT,
     window_started_at   TEXT,
     sends_in_window     INTEGER NOT NULL DEFAULT 0
+);
+
+CREATE TABLE IF NOT EXISTS registration_email_verifications (
+    user_id             INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
+    otp_hash            TEXT,
+    expires_at          TEXT NOT NULL,
+    sent_at             TEXT,
+    attempts            INTEGER NOT NULL DEFAULT 0,
+    window_started_at   TEXT,
+    sends_in_window     INTEGER NOT NULL DEFAULT 0,
+    used_at             TEXT,
+    created_at          TEXT NOT NULL
 );
 
 CREATE TABLE IF NOT EXISTS admin_otp_challenges (

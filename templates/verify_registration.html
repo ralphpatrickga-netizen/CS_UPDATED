@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}Verify Code — BarangayConnect{% endblock %}
+{% block title %}Verify Email — BarangayConnect{% endblock %}
 {% block auth_content %}
 <div class="auth-wrap">
   <div class="auth-card">
@@ -7,8 +7,8 @@
       <span class="brand-mark">BC</span>
       <div><strong style="font-family:var(--font-display); color:var(--navy)">BarangayConnect</strong></div>
     </div>
-    <h1>Two-step verification</h1>
-    <p class="auth-sub">Enter the six-digit code sent to your registered email address.</p>
+    <h1>Verify your email</h1>
+    <p class="auth-sub">Enter the six-digit verification code sent to {{ email }}. You need to verify your email before logging in.</p>
     <p class="concern-reset-countdown" role="timer" data-countdown-seconds="{{ otp_expires_in }}">
       Code expires in <strong class="countdown-value">{{ otp_expires_in // 60 }}m {{ otp_expires_in % 60 }}s</strong>.
     </p>
@@ -17,9 +17,9 @@
         <label for="email-otp">Email verification code</label>
         <input class="otp-input" id="email-otp" type="text" name="email_otp" inputmode="numeric" pattern="[0-9]{6}" maxlength="6" required autofocus placeholder="000000" autocomplete="one-time-code">
       </div>
-      <button class="btn btn-primary btn-block" type="submit">Verify &amp; Continue</button>
+      <button class="btn btn-primary btn-block" type="submit">Verify Email</button>
     </form>
-    <form method="POST" action="{{ url_for('resend_admin_otp') }}" class="form-grid" style="margin-top:12px;">
+    <form method="POST" action="{{ url_for('resend_registration_otp') }}" class="form-grid" style="margin-top:12px;">
       <button class="btn btn-outline btn-block" id="resend-code" type="submit" {% if otp_resend_wait > 0 %}disabled{% endif %}>
         Resend Code
       </button>
@@ -27,7 +27,7 @@
         {% if otp_resend_wait > 0 %}You can request another code in {{ otp_resend_wait }} seconds.{% endif %}
       </small>
     </form>
-    <div class="auth-foot"><a href="{{ url_for('login') }}">Cancel and return to login</a></div>
+    <div class="auth-foot"><a href="{{ url_for('login') }}">Back to login</a></div>
   </div>
 </div>
 <script>

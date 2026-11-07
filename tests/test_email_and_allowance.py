@@ -491,21 +491,43 @@ class SecurityAndAllowanceTests(unittest.TestCase):
 
     def test_resident_staff_and_admin_login_without_otp(self):
         accounts = (
-            ("mfa-resident@example.test", "resident", None, "/dashboard"),
-            ("mfa-staff@example.test", "staff", "bpso", "/staff/dashboard"),
-            ("mfa-admin@example.test", "admin", None, "/admin/dashboard"),
+            ("mfa-resident@example.test", "resident", None, "/dashboard", 0),
+            ("mfa-bpso@example.test", "staff", "bpso", "/staff/dashboard", 0),
+            ("mfa-treasurer@example.test", "staff", "treasurer", "/staff/dashboard", 0),
+            ("mfa-secretary@example.test", "staff", "secretary", "/staff/dashboard", 0),
+            ("mfa-admin@example.test", "admin", None, "/admin/dashboard", 0),
+            ("test-admin@example.test", "admin", None, "/admin/dashboard", 1),
         )
         conn = dbh.get_db()
         user_ids = {}
-        for email, role, office, _ in accounts:
+        for email, role, office, _, is_super_admin in accounts:
+            password_hash = generate_password_hash("Resident@1234")
+            if is_super_admin:
+                conn.execute(
+                    "UPDATE users SET password_hash=?,must_reset_pw=0 WHERE email=?",
+                    (password_hash, email),
+                )
+                user_ids[email] = conn.execute(
+                    "SELECT id FROM users WHERE email=?", (email,)
+                ).fetchone()["id"]
+                continue
             user_ids[email] = conn.execute(
-                "INSERT INTO users (full_name,email,password_hash,role,office) VALUES (?,?,?,?,?)",
-                (role.title(), email, generate_password_hash("Resident@1234"), role, office),
+                "INSERT INTO users "
+                "(full_name,email,password_hash,role,office,is_super_admin) "
+                "VALUES (?,?,?,?,?,?)",
+                (
+                    role.title(),
+                    email,
+                    password_hash,
+                    role,
+                    office,
+                    is_super_admin,
+                ),
             ).lastrowid
         conn.commit()
         conn.close()
         with patch.object(A.email_service, "send_email") as send_email:
-            for email, _, _, destination in accounts:
+            for email, _, _, destination, _ in accounts:
                 client = A.app.test_client()
                 response = client.post(
                     "/login", data={"email": email, "password": "Resident@1234"}
@@ -526,8 +548,8 @@ class SecurityAndAllowanceTests(unittest.TestCase):
         email = "test-admin@example.test"
         conn = dbh.get_db()
         conn.execute(
-            "UPDATE users SET must_reset_pw=1, recovery_email=? WHERE id=1",
-            (email,),
+            "UPDATE users SET must_reset_pw=1, recovery_email=?, password_hash=? WHERE id=1",
+            (email, generate_password_hash("Admin@1234")),
         )
         conn.commit()
         conn.close()

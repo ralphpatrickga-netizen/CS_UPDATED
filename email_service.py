@@ -19,11 +19,17 @@ def send_email(recipient, subject, body):
         timeout = float(os.environ.get("SMTP_TIMEOUT_SECONDS", "15"))
     except ValueError as exc:
         raise EmailConfigurationError("SMTP_PORT and SMTP_TIMEOUT_SECONDS must be numeric.") from exc
+    if not 1 <= port <= 65535 or timeout <= 0:
+        raise EmailConfigurationError("SMTP_PORT must be valid and SMTP_TIMEOUT_SECONDS must be positive.")
 
     use_ssl = os.environ.get("SMTP_USE_SSL", "false").lower() in {"1", "true", "yes"}
     use_tls = os.environ.get("SMTP_USE_TLS", "true").lower() in {"1", "true", "yes"}
     if use_ssl and use_tls:
         raise EmailConfigurationError("Enable only one of SMTP_USE_SSL or SMTP_USE_TLS.")
+    username = os.environ.get("SMTP_USERNAME", "").strip()
+    password = os.environ.get("SMTP_PASSWORD", "")
+    if bool(username) != bool(password):
+        raise EmailConfigurationError("SMTP_USERNAME and SMTP_PASSWORD must both be configured.")
 
     message = EmailMessage()
     message["From"] = sender
@@ -38,8 +44,6 @@ def send_email(recipient, subject, body):
     ) as smtp:
         if use_tls:
             smtp.starttls(context=context)
-        username = os.environ.get("SMTP_USERNAME", "")
-        password = os.environ.get("SMTP_PASSWORD", "")
         if username:
             smtp.login(username, password)
         smtp.send_message(message)

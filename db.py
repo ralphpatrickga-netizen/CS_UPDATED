@@ -41,6 +41,8 @@ def migrate_db():
             used_at TEXT,
             created_at TEXT NOT NULL
         );
+        CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user
+            ON password_reset_tokens(user_id);
         CREATE TABLE IF NOT EXISTS password_reset_codes (
             user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
             code_hash TEXT,
@@ -57,12 +59,8 @@ def migrate_db():
         );
         CREATE TABLE IF NOT EXISTS admin_otp_challenges (
             user_id INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-            otp_hash TEXT,
             email_otp_hash TEXT,
-            sms_otp_hash TEXT,
-            pending_phone TEXT,
-            mode TEXT NOT NULL DEFAULT 'login',
-            email_verified_at TEXT,
+            mode TEXT NOT NULL DEFAULT 'email_only',
             expires_at TEXT,
             sent_at TEXT,
             attempts INTEGER NOT NULL DEFAULT 0,
@@ -94,10 +92,7 @@ def migrate_db():
     }
     for column, definition in (
         ("email_otp_hash", "TEXT"),
-        ("sms_otp_hash", "TEXT"),
-        ("pending_phone", "TEXT"),
-        ("mode", "TEXT NOT NULL DEFAULT 'login'"),
-        ("email_verified_at", "TEXT"),
+        ("mode", "TEXT NOT NULL DEFAULT 'email_only'"),
     ):
         if column not in otp_cols:
             conn.execute(f"ALTER TABLE admin_otp_challenges ADD COLUMN {column} {definition}")
@@ -295,6 +290,19 @@ def migrate_db():
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_complaints_verification "
             "ON complaints(community_issue_id, is_verified)"
+        )
+        if {"created_at", "category", "status"}.issubset(complaint_cols):
+            conn.execute(
+                "CREATE INDEX IF NOT EXISTS idx_complaints_created_category_status "
+                "ON complaints(created_at, category, status)"
+            )
+    request_cols = {
+        row["name"] for row in conn.execute("PRAGMA table_info(requests)").fetchall()
+    }
+    if {"created_at", "request_type", "status"}.issubset(request_cols):
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_requests_created_type_status "
+            "ON requests(created_at, request_type, status)"
         )
     residents = conn.execute(
         "SELECT id FROM users WHERE role='resident' "

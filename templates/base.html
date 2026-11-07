@@ -39,6 +39,10 @@
         <a href="{{ url_for('staff_complaints') }}" class="{{ 'active' if request.endpoint in ['staff_complaints','view_complaint'] }}"><span class="nav-icon" aria-hidden="true">⚑</span>Concerns{% if nav_new_complaints %}<span class="pill-badge" aria-label="{{ nav_new_complaints }} new concerns" title="New concerns">{{ nav_new_complaints }}</span>{% endif %}</a>
         <a href="{{ url_for('community_issue_management') }}" class="{{ 'active' if request.endpoint in ['community_issue_management','community_issue_management_detail'] }}"><span class="nav-icon" aria-hidden="true">◎</span>Clustered Issues</a>
         {% endif %}
+        {% if nav_requests or nav_complaints %}
+        <div class="nav-section-label">Insights</div>
+        <a href="{{ url_for('admin_reports') }}" class="{{ 'active' if request.endpoint=='admin_reports' }}"><span class="nav-icon" aria-hidden="true">▥</span>Data Analytics</a>
+        {% endif %}
         <div class="nav-section-label">People</div>
         <a href="{{ url_for('view_residents') }}" class="{{ 'active' if request.endpoint=='view_residents' }}"><span class="nav-icon" aria-hidden="true">♙</span>Residents</a>
       {% elif current_user.role == 'admin' %}

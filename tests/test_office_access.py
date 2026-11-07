@@ -840,7 +840,8 @@ class MigrationTests(unittest.TestCase):
         self.assertEqual(offices[4], "secretary")
         self.assertIsNone(offices[5])
         self.assertIn("contact_number", user_cols)
-        self.assertTrue({"email_otp_hash", "sms_otp_hash", "pending_phone"}.issubset(otp_cols))
+        self.assertTrue({"email_otp_hash", "mode", "expires_at"}.issubset(otp_cols))
+        self.assertNotIn("sms_otp_hash", otp_cols)
         self.assertIn("registered_voter", cols)
         self.assertIn("password_reset_codes", tables)
 

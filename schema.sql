@@ -178,6 +178,7 @@ CREATE TABLE IF NOT EXISTS password_reset_tokens (
     used_at         TEXT,
     created_at      TEXT NOT NULL
 );
+CREATE INDEX IF NOT EXISTS idx_password_reset_tokens_user ON password_reset_tokens(user_id);
 
 CREATE TABLE IF NOT EXISTS password_reset_codes (
     user_id         INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
@@ -197,12 +198,8 @@ CREATE TABLE IF NOT EXISTS password_reset_limits (
 
 CREATE TABLE IF NOT EXISTS admin_otp_challenges (
     user_id             INTEGER PRIMARY KEY REFERENCES users(id) ON DELETE CASCADE,
-    otp_hash            TEXT,
     email_otp_hash      TEXT,
-    sms_otp_hash        TEXT,
-    pending_phone       TEXT,
-    mode                TEXT NOT NULL DEFAULT 'login',
-    email_verified_at   TEXT,
+    mode                TEXT NOT NULL DEFAULT 'email_only',
     expires_at          TEXT,
     sent_at             TEXT,
     attempts            INTEGER NOT NULL DEFAULT 0,
@@ -242,8 +239,10 @@ CREATE TABLE IF NOT EXISTS announcements (
 
 CREATE INDEX IF NOT EXISTS idx_requests_resident ON requests(resident_id);
 CREATE INDEX IF NOT EXISTS idx_requests_status ON requests(status);
+CREATE INDEX IF NOT EXISTS idx_requests_created_type_status ON requests(created_at, request_type, status);
 CREATE INDEX IF NOT EXISTS idx_complaints_resident ON complaints(resident_id);
 CREATE INDEX IF NOT EXISTS idx_complaints_status ON complaints(status);
+CREATE INDEX IF NOT EXISTS idx_complaints_created_category_status ON complaints(created_at, category, status);
 CREATE INDEX IF NOT EXISTS idx_complaints_community_issue ON complaints(community_issue_id);
 CREATE INDEX IF NOT EXISTS idx_complaints_verification ON complaints(community_issue_id, is_verified);
 CREATE INDEX IF NOT EXISTS idx_notifications_user ON notifications(user_id);

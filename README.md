@@ -29,12 +29,13 @@ the PRD is already implemented and working here.
   any time from My Profile, along with contact number.
 - **Admin-only staff & administrator provisioning** (PROV-02) — no public staff/admin
   signup route exists anywhere; staff get a temp password and must set a permanent
-  one on first login; admin login requires a time-limited email OTP with resend
-  limits, server-side verification, and one-time use.
-- **Email-based password recovery** — residents receive a time-limited, single-use
-  six-digit code by SMTP, then enter that code and their new password on the
-  reset page without logging in first. Codes are stored as keyed digests and
-  limited to five attempts; passwords continue to use Werkzeug's password hashing.
+  one on first login; sign-in uses a time-limited email OTP with resend limits,
+  server-side verification, and one-time use. No SMS OTP or paid SMS provider is
+  required.
+- **Email-based password recovery** — active residents, staff, and administrators
+  receive a time-limited, single-use password reset link at their registered
+  email address. Only a SHA-256 digest of each cryptographically random token is
+  stored; passwords continue to use Werkzeug's password hashing.
 - **Document requests** (REQ-03) — **Certificate of Indigency**,
   **Certificate of Residency** and **Barangay Clearance** are offered (simplified
   from the original five types per the client's request); realistic barangay-style form (civil status,
@@ -93,8 +94,11 @@ the PRD is already implemented and working here.
   topbar+card shell as specified, with the stat cards / recent activity table
   described in the PRD's UI reference.
 - **In-app notifications** (NOTIF-09) on every status change.
-- **Reports & analytics** (RPT-10) — daily/weekly/monthly/yearly, exportable as
-  Excel (.xlsx) and PDF.
+- **Data analytics & reports** (RPT-10) — database-backed complaint and document
+  request rankings, status distributions, monthly trends, period comparisons,
+  summary metrics, and date/category/document/status filters. Admins see all
+  records; staff analytics and exports are restricted to their assigned office.
+  Reports can be exported as CSV, PDF, or Excel (.xlsx), or printed.
 - **Global search & filters** (SRCH-11).
 - **Resident AI Assistant** — a chat widget on the resident side that looks up
   the status of a request/complaint straight from the database when you paste
@@ -177,7 +181,7 @@ the PRD is already implemented and working here.
   UI), 403/404 pages, resident data scoped to its owner.
 
 Not implemented (out of scope per the PRD's own "Limitations" section): SMS and
-payment processing. Real password-reset and admin OTP email delivery require
+payment processing. Real password-reset and sign-in OTP email delivery require
 the SMTP settings below.
 
 ## Requirements
@@ -221,23 +225,21 @@ Remove-Item Env:DEMO_ADMIN_PASSWORD, Env:DEMO_STAFF_PASSWORD, Env:DEMO_RESIDENT_
 #
 #    Windows PowerShell example:
 #    $env:SECRET_KEY = "replace-with-a-long-random-secret"
+#    $env:APP_BASE_URL = "https://your-public-barangayconnect-domain"
 #    $env:SMTP_HOST = "smtp.example.com"
 #    $env:SMTP_PORT = "587"
 #    $env:SMTP_USERNAME = "your-smtp-username"
 #    $env:SMTP_PASSWORD = "your-smtp-password"
 #    $env:SMTP_FROM = "BarangayConnect <no-reply@example.com>"
 #    $env:SMTP_USE_TLS = "true"
-#    $env:SEMAPHORE_API_KEY = "your-semaphore-api-key"
-#    $env:LOGIN_SMS_ENABLED = "false"
 #
+#    Configure APP_BASE_URL to the public HTTPS origin and set valid SMTP
+#    credentials before deploying. SMTP placeholders do not deliver email.
 #    Configure optional expiration/resend settings from .env.example as needed.
-#    Login currently requires an email code only. To require separate email and
-#    SMS codes later, set LOGIN_SMS_ENABLED=true after configuring Semaphore.
+#    Sign-in uses email codes only; no SMS provider configuration is needed.
 #    An admin can
 #    update existing users' numbers from Admin > Residents, Staff, and
 #    Administrators; staff can update resident numbers from Staff > Residents.
-#    The Founding Admin without a number can verify email once
-#    and then register and verify a mobile number during login.
 
 # 7. (Optional) enable Claude-powered answers in the Resident Assistant for
 #    open-ended questions. Skip this — the assistant works fine without it.

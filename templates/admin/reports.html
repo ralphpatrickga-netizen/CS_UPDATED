@@ -1,36 +1,258 @@
 {% extends "base.html" %}
-{% block title %}Reports — BarangayConnect{% endblock %}
-{% block page_title %}Reports &amp; Analytics{% endblock %}
+{% block title %}Data Analytics — BarangayConnect{% endblock %}
+{% block page_title %}Data Analytics &amp; Reports{% endblock %}
 {% block content %}
-<div class="filter-chips">
-  {% for key, label in [('daily','Daily'), ('weekly','Weekly'), ('monthly','Monthly'), ('yearly','Yearly')] %}
-  <a class="chip {{ 'active' if report.range==key }}" href="{{ url_for('admin_reports', range=key) }}">{{ label }}</a>
-  {% endfor %}
-</div>
+<section class="analytics-toolbar card">
+  <div>
+    <h2>Barangay Service Analytics</h2>
+    <p class="muted">Database records · {{ report.range_label }} · Generated {{ report.generated_at }}</p>
+    {% if report.start_date %}<p class="muted">Coverage: {{ report.start_date }} to {{ report.end_date }}</p>{% endif %}
+  </div>
+  <div class="actions-row analytics-exports">
+    <a class="btn btn-outline btn-sm" href="{{ export_urls.csv }}">Export CSV</a>
+    <a class="btn btn-outline btn-sm" href="{{ export_urls.pdf }}">Export PDF</a>
+    <a class="btn btn-outline btn-sm" href="{{ export_urls.xlsx }}">Export Excel</a>
+    <button class="btn btn-outline btn-sm no-print" type="button" onclick="window.print()">Print</button>
+  </div>
+</section>
 
-<div class="stat-grid">
-  <div class="stat-card accent-cyan"><div class="num">{{ report.total_requests }}</div><div class="label">Total Requests</div></div>
-  <div class="stat-card"><div class="num">{{ report.total_complaints }}</div><div class="label">Total Complaints</div></div>
-  <div class="stat-card accent-amber"><div class="num">{{ report.approval_rate }}%</div><div class="label">Approval/Completion Rate</div></div>
-  <div class="stat-card"><div class="num">{{ report.resolution_rate }}%</div><div class="label">Complaint Resolution Rate</div></div>
-</div>
+{% if filter_error %}
+<div class="flash flash-error" role="alert">{{ filter_error }}</div>
+{% endif %}
 
-<div class="card">
-  <div class="card-head">
-    <h3>Staff Activity ({{ report.range|title }})</h3>
-    <div class="actions-row">
-      <a class="btn btn-outline btn-sm" href="{{ url_for('export_report', range=report.range, format='xlsx') }}">Export Excel</a>
-      <a class="btn btn-outline btn-sm" href="{{ url_for('export_report', range=report.range, format='pdf') }}">Export PDF</a>
+<form class="card analytics-filter-form no-print" method="GET" action="{{ url_for('admin_reports') }}">
+  <div class="analytics-filter-grid">
+    <div class="form-row">
+      <label for="analytics-range">Date range</label>
+      <select id="analytics-range" name="range">
+        {% for key, label in [('today','Today'),('week','This Week'),('month','This Month'),('last_month','Last Month'),('year','This Year'),('custom','Custom Range'),('all','All Time')] %}
+        <option value="{{ key }}" {{ 'selected' if report.filters.range == key }}>{{ label }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    <div class="form-row">
+      <label for="analytics-start">Start date</label>
+      <input id="analytics-start" type="date" name="start_date" value="{{ report.filters.start_date }}">
+    </div>
+    <div class="form-row">
+      <label for="analytics-end">End date</label>
+      <input id="analytics-end" type="date" name="end_date" value="{{ report.filters.end_date }}">
+    </div>
+    {% if complaint_access %}
+    <div class="form-row">
+      <label for="analytics-category">Complaint category</label>
+      <select id="analytics-category" name="category">
+        <option value="">All categories</option>
+        {% for category in complaint_categories %}
+        <option value="{{ category }}" {{ 'selected' if report.filters.category == category }}>{{ category }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% endif %}
+    {% if request_types %}
+    <div class="form-row">
+      <label for="analytics-document">Document type</label>
+      <select id="analytics-document" name="document_type">
+        <option value="">All documents</option>
+        {% for document in request_types %}
+        <option value="{{ document }}" {{ 'selected' if report.filters.document_type == document }}>{{ document }}</option>
+        {% endfor %}
+      </select>
+    </div>
+    {% endif %}
+    <div class="form-row">
+      <label for="analytics-status">Status</label>
+      <select id="analytics-status" name="status">
+        <option value="">All statuses</option>
+        {% for status in (complaint_statuses if complaint_access else []) + request_statuses %}
+        <option value="{{ status }}" {{ 'selected' if report.filters.status == status }}>{{ status }}</option>
+        {% endfor %}
+      </select>
     </div>
   </div>
-  <p class="muted">New residents this period: {{ report.new_residents }}</p>
-  {% if report.staff_activity %}
-  <div class="table-wrap"><table>
-    <tr><th>Staff Member</th><th>Actions Logged</th></tr>
-    {% for row in report.staff_activity %}
-    <tr><td>{{ row.full_name }}</td><td>{{ row.actions }}</td></tr>
-    {% endfor %}
-  </table></div>
-  {% else %}<div class="empty-state">No staff activity logged for this period.</div>{% endif %}
+  <div class="analytics-filter-actions">
+    <button class="btn btn-primary" type="submit">Apply Filters</button>
+    <a class="btn btn-outline" href="{{ url_for('admin_reports') }}">Clear</a>
+  </div>
+</form>
+
+{% if report.has_data %}
+<div class="stat-grid analytics-stat-grid">
+  <div class="stat-card accent-cyan"><div class="num">{{ report.total_transactions }}</div><div class="label">Total Transactions</div></div>
+  {% if complaint_access %}
+  <div class="stat-card"><div class="num">{{ report.total_complaints }}</div><div class="label">Total Complaints</div></div>
+  <div class="stat-card accent-amber"><div class="num">{{ report.verified_complaints }}</div><div class="label">Verified Complaints</div><small class="analytics-card-note">Complaint status list uses Verified, not Approved.</small></div>
+  <div class="stat-card"><div class="num">{{ report.pending_complaints }}</div><div class="label">Pending Complaints</div></div>
+  <div class="stat-card"><div class="num">{{ report.resolved_complaints }}</div><div class="label">Resolved / Closed Complaints</div></div>
+  {% endif %}
+  {% if request_types %}
+  <div class="stat-card"><div class="num">{{ report.total_requests }}</div><div class="label">Document Requests</div></div>
+  <div class="stat-card accent-cyan"><div class="num">{{ report.approved_requests }}</div><div class="label">Approved Requests</div></div>
+  <div class="stat-card"><div class="num">{{ report.pending_requests }}</div><div class="label">Pending Requests</div></div>
+  {% endif %}
+  <div class="stat-card accent-amber"><div class="num">{{ report.rejected }}</div><div class="label">Rejected Requests / Complaints</div></div>
 </div>
+{% else %}
+<div class="card empty-state analytics-empty">
+  <h2>No transactions match these filters</h2>
+  <p>Try a wider date range or clear one or more filters.</p>
+</div>
+{% endif %}
+
+{% if complaint_access or request_types %}
+<section class="analytics-insights card">
+  <div class="card-head"><div><h2>At a Glance</h2><p class="muted">Descriptive insights based only on matching records.</p></div></div>
+  <div class="analytics-insight-grid">
+    {% if complaint_access %}
+    <div><span class="analytics-insight-label">Most common complaint</span><strong>{{ report.category_leader.label if report.category_leader else 'No matching reports' }}</strong><span>{{ report.category_leader.count if report.category_leader else 0 }} reports</span></div>
+    {% if report.peak_complaint_month %}
+    <div><span class="analytics-insight-label">Busiest complaint month</span><strong>{{ report.peak_complaint_month.label }}</strong><span>{{ report.peak_complaint_month.count }} reports</span></div>
+    {% endif %}
+    {% endif %}
+    {% if request_types %}
+    <div><span class="analytics-insight-label">Most requested document</span><strong>{{ report.document_leader.label if report.document_leader else 'No matching requests' }}</strong><span>{{ report.document_leader.count if report.document_leader else 0 }} requests</span></div>
+    {% if report.peak_request_month %}
+    <div><span class="analytics-insight-label">Busiest request month</span><strong>{{ report.peak_request_month.label }}</strong><span>{{ report.peak_request_month.count }} requests</span></div>
+    {% endif %}
+    {% endif %}
+    {% if report.comparison %}
+    <div><span class="analytics-insight-label">Complaints vs previous period</span><strong>{{ report.comparison.complaints }} vs {{ report.comparison.previous_complaints }}</strong><span>{% if report.comparison.complaint_change is not none %}{{ '%+g'|format(report.comparison.complaint_change) }}%{% else %}No prior-period baseline{% endif %}</span></div>
+    <div><span class="analytics-insight-label">Requests vs previous period</span><strong>{{ report.comparison.requests }} vs {{ report.comparison.previous_requests }}</strong><span>{% if report.comparison.request_change is not none %}{{ '%+g'|format(report.comparison.request_change) }}%{% else %}No prior-period baseline{% endif %}</span></div>
+    <div><span class="analytics-insight-label">Categories rising vs previous period</span><strong>{{ report.increasing_complaints|length }}</strong><span>{% if report.increasing_complaints %}{{ report.increasing_complaints|map(attribute='label')|join(', ') }}{% else %}None increased{% endif %}</span></div>
+    <div><span class="analytics-insight-label">Documents rising vs previous period</span><strong>{{ report.increasing_documents|length }}</strong><span>{% if report.increasing_documents %}{{ report.increasing_documents|map(attribute='label')|join(', ') }}{% else %}None increased{% endif %}</span></div>
+    {% endif %}
+    {% if complaint_access %}<div><span class="analytics-insight-label">Average complaints per month</span><strong>{{ report.average_complaints }}</strong><span>Across the filtered period</span></div>{% endif %}
+    {% if request_types %}<div><span class="analytics-insight-label">Average requests per month</span><strong>{{ report.average_requests }}</strong><span>Across the filtered period</span></div>{% endif %}
+  </div>
+</section>
+{% endif %}
+
+<div class="analytics-chart-grid">
+  {% if complaint_access %}
+  <section class="card analytics-chart-card">
+    <div class="card-head"><div><h2>Most Common Complaints</h2><p class="muted">Ranked by matching submissions. Percent is of all matching complaints.</p></div></div>
+    {% if report.complaint_categories %}
+    <div class="analytics-ranked-list">
+      {% for row in report.complaint_categories %}
+      <div class="analytics-rank-row">
+        <div class="analytics-rank-heading"><strong>{{ row.label }}</strong><span>{{ row.count }} · {{ row.percentage }}%</span></div>
+        <div class="analytics-grouped-bars" aria-label="{{ row.label }}: {{ row.count }} current period, {{ row.previous }} previous period">
+          <div class="analytics-bar-track"><span class="analytics-bar-current" style="width:{{ row.current_width }}%"></span></div>
+          <span class="analytics-bar-value">{{ row.count }}</span>
+          {% if report.comparison %}<div class="analytics-bar-track"><span class="analytics-bar-previous" style="width:{{ row.previous_width }}%"></span></div><span class="analytics-bar-value analytics-muted-value">{{ row.previous }}</span>{% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}<div class="empty-state">No complaints match this selection.</div>{% endif %}
+    {% if report.comparison %}<div class="analytics-legend"><span><i class="legend-current"></i>Selected period</span><span><i class="legend-previous"></i>Previous period</span></div>{% endif %}
+  </section>
+  {% endif %}
+
+  {% if request_types %}
+  <section class="card analytics-chart-card">
+    <div class="card-head"><div><h2>Most Requested Documents</h2><p class="muted">Ranked by matching submissions. Percent is of all matching requests.</p></div></div>
+    {% if report.document_types %}
+    <div class="analytics-ranked-list">
+      {% for row in report.document_types %}
+      <div class="analytics-rank-row">
+        <div class="analytics-rank-heading"><strong>{{ row.label }}</strong><span>{{ row.count }} · {{ row.percentage }}%</span></div>
+        <div class="analytics-grouped-bars" aria-label="{{ row.label }}: {{ row.count }} current period, {{ row.previous }} previous period">
+          <div class="analytics-bar-track"><span class="analytics-bar-current" style="width:{{ row.current_width }}%"></span></div>
+          <span class="analytics-bar-value">{{ row.count }}</span>
+          {% if report.comparison %}<div class="analytics-bar-track"><span class="analytics-bar-previous" style="width:{{ row.previous_width }}%"></span></div><span class="analytics-bar-value analytics-muted-value">{{ row.previous }}</span>{% endif %}
+        </div>
+      </div>
+      {% endfor %}
+    </div>
+    {% else %}<div class="empty-state">No document requests match this selection.</div>{% endif %}
+    {% if report.comparison %}<div class="analytics-legend"><span><i class="legend-current"></i>Selected period</span><span><i class="legend-previous"></i>Previous period</span></div>{% endif %}
+  </section>
+  {% endif %}
+</div>
+
+<div class="analytics-chart-grid">
+  {% if complaint_access %}
+  <section class="card analytics-chart-card">
+    <div class="card-head"><div><h2>Complaint Status Distribution</h2><p class="muted">Share of complaints after filters.</p></div></div>
+    <div class="analytics-status-layout">
+      <div class="analytics-doughnut" role="img" aria-label="Complaint status distribution" style="background:{{ report.complaint_doughnut }}"><span>{{ report.total_complaints }}</span></div>
+      <div class="analytics-status-legend">
+        {% for row in report.complaint_statuses %}
+        <div><span><i style="background:{{ complaint_status_colors[row.label] }}"></i>{{ row.label }}</span><strong>{{ row.count }} <small>{{ row.percentage }}%</small></strong></div>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+  {% endif %}
+  {% if request_types %}
+  <section class="card analytics-chart-card">
+    <div class="card-head"><div><h2>Document Request Status Distribution</h2><p class="muted">Share of requests after filters.</p></div></div>
+    <div class="analytics-status-layout">
+      <div class="analytics-doughnut" role="img" aria-label="Document request status distribution" style="background:{{ report.request_doughnut }}"><span>{{ report.total_requests }}</span></div>
+      <div class="analytics-status-legend">
+        {% for row in report.request_statuses %}
+        <div><span><i style="background:{{ request_status_colors[row.label] }}"></i>{{ row.label }}</span><strong>{{ row.count }} <small>{{ row.percentage }}%</small></strong></div>
+        {% endfor %}
+      </div>
+    </div>
+  </section>
+  {% endif %}
+</div>
+
+{% if complaint_access or request_types %}
+<section class="card analytics-trend-card">
+  <div class="card-head"><div><h2>Monthly Transaction Trends</h2><p class="muted">Monthly submissions within the selected date range. Latest 12 months shown.</p></div></div>
+  {% if report.complaint_months or report.request_months %}
+  <div class="analytics-line-legend">
+    {% if complaint_access %}<span><i class="line-complaint-key"></i>Complaints</span>{% endif %}
+    {% if request_types %}<span><i class="line-request-key"></i>Document requests</span>{% endif %}
+  </div>
+  <div class="analytics-line-chart">
+    <svg viewBox="0 0 600 200" role="img" aria-label="Monthly comparison of complaints and document requests">
+      <line x1="40" y1="30" x2="560" y2="30"></line>
+      <line x1="40" y1="85" x2="560" y2="85"></line>
+      <line x1="40" y1="145" x2="560" y2="145"></line>
+      {% if complaint_access and report.complaint_months %}
+      <polyline class="analytics-complaint-line" points="{{ report.complaint_line_points }}"></polyline>
+      {% for row in report.complaint_months %}
+      <circle class="analytics-complaint-point" cx="{{ 40 + loop.index0 * 520 / (report.complaint_months|length - 1 if report.complaint_months|length > 1 else 1) }}" cy="{{ 145 - row.count / (report.monthly_max if report.monthly_max else 1) * 115 }}" r="3"><title>{{ row.label }} complaints: {{ row.count }}</title></circle>
+      {% endfor %}
+      {% endif %}
+      {% if request_types and report.request_months %}
+      <polyline class="analytics-request-line" points="{{ report.request_line_points }}"></polyline>
+      {% for row in report.request_months %}
+      <circle class="analytics-request-point" cx="{{ 40 + loop.index0 * 520 / (report.request_months|length - 1 if report.request_months|length > 1 else 1) }}" cy="{{ 145 - row.count / (report.monthly_max if report.monthly_max else 1) * 115 }}" r="3"><title>{{ row.label }} requests: {{ row.count }}</title></circle>
+      {% endfor %}
+      {% endif %}
+      {% for row in (report.complaint_months if complaint_access and report.complaint_months else report.request_months) %}
+      <text x="{{ 40 + loop.index0 * 520 / (loop.length - 1 if loop.length > 1 else 1) }}" y="176">{{ row.label }}</text>
+      {% endfor %}
+    </svg>
+  </div>
+  {% else %}<div class="empty-state">No monthly transaction data.</div>{% endif %}
+</section>
+{% endif %}
+
+<script>
+  (function () {
+    const range = document.getElementById("analytics-range");
+    const start = document.getElementById("analytics-start");
+    const end = document.getElementById("analytics-end");
+    const form = range.closest("form");
+    const submit = form.querySelector('button[type="submit"]');
+    function updateDateInputs() {
+      const custom = range.value === "custom";
+      start.required = custom;
+      end.required = custom;
+    }
+    range.addEventListener("change", updateDateInputs);
+    form.addEventListener("submit", function () {
+      submit.disabled = true;
+      submit.textContent = "Updating analytics…";
+      submit.setAttribute("aria-busy", "true");
+    });
+    updateDateInputs();
+  })();
+</script>
 {% endblock %}

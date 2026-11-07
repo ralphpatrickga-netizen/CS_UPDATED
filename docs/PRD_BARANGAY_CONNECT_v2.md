@@ -64,7 +64,7 @@ the full spec as actually built and tested.
 - Client-side validation for email format and password strength (min. 8 characters, at least one letter and one digit).
 - `POST /register` — creates a Resident account after validating unique email.
 - `POST /login` — validates credentials, checks role, issues a session.
-- `POST /forgot-password` — Resident-only; sends a time-limited, single-use six-digit password-reset code by SMTP. Residents enter the code and new password without logging in.
+- `POST /forgot-password` — sends a time-limited, single-use password-reset link by SMTP to the registered address of an active resident, staff, or administrator account. The token is stored as a SHA-256 digest.
 - Passwords hashed (PBKDF2 via Werkzeug) before storage; account lockout for 15 minutes after 5 failed login attempts.
 
 ### 3.2 Admin & Staff Account Provisioning (PROV-02)
@@ -144,7 +144,7 @@ the full spec as actually built and tested.
 *(unchanged from v1.0 unless noted)*
 
 - **Performance:** Response time below 3 seconds; supports multiple concurrent users.
-- **Authentication & Account Recovery:** MFA (time-limited email OTP with resend rate limits) required for Administrator login; password policy (min. 8 characters, letter + digit) enforced at registration and password-change for all roles; Residents use a self-service emailed reset code (single-use, five attempts maximum); Staff password recovery is Admin-handled only; rate limiting/account lockout after repeated failed attempts on any role.
+- **Authentication & Account Recovery:** MFA (time-limited email OTP with resend rate limits) required for Administrator login; password policy (min. 8 characters, letter + digit) enforced at registration and password-change for all roles; active accounts use a self-service, single-use emailed password reset link with a configurable expiry and request rate limits; rate limiting/account lockout after repeated failed attempts on any role.
 - **Input & File Validation:** All form fields sanitized and validated server-side (parameterized SQL throughout — no string-built queries); file uploads restricted by type (JPG, PNG, PDF only) and maximum size (5MB); uploaded file content validated against its declared type via magic-byte inspection to block disguised malicious files.
 - **Audit Logs & Accountability:** Audit logs are append-only (the application layer never issues `UPDATE`/`DELETE` against the audit table), including for Administrator actions; logs capture who performed an action, what was changed, and when — especially staff/admin account creation, edits, and status changes on requests/complaints.
 - **Data Privacy:** Aligns with the Philippine Data Privacy Act (RA 10173); personal data access limited to what each role needs.

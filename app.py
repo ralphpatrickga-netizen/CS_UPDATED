@@ -9,6 +9,7 @@ import threading
 from functools import wraps
 from datetime import datetime, timedelta
 import random
+from urllib.parse import urlsplit
 
 from flask import (
     Flask, render_template, request, redirect, url_for, session, flash,
@@ -22,8 +23,6 @@ import db as dbh
 import chatbot
 import priority as prioritymod
 import email_service
-import sms_service
-import requests
 
 BASE_DIR = os.path.dirname(os.path.abspath(__file__))
 UPLOAD_DIR = os.path.join(BASE_DIR, "uploads")
@@ -193,6 +192,14 @@ def _automatic_backup():
 app.config["MAX_CONTENT_LENGTH"] = MAX_FILE_SIZE + 1024
 
 
+@app.after_request
+def _protect_password_reset_response(response):
+    if request.endpoint == "reset_password":
+        response.headers["Cache-Control"] = "no-store"
+        response.headers["Referrer-Policy"] = "no-referrer"
+    return response
+
+
 # ---------------------------------------------------------------- helpers --
 
 def current_user():
@@ -212,12 +219,6 @@ def configured_minutes(name, default, minimum=1):
         return default
 
 
-def login_sms_enabled():
-    return os.environ.get("LOGIN_SMS_ENABLED", "false").strip().lower() in {
-        "1", "true", "yes", "on"
-    }
-
-
 def _timestamp(value):
     return datetime.fromisoformat(value) if value else None
 
@@ -226,16 +227,34 @@ def _token_digest(value):
     return hashlib.sha256(value.encode("utf-8")).hexdigest()
 
 
+def _password_reset_link(token):
+    base_url = (
+        os.environ.get("APP_BASE_URL", "").strip()
+        or os.environ.get("RENDER_EXTERNAL_URL", "").strip()
+        or request.url_root
+    )
+    try:
+        parsed = urlsplit(base_url)
+        hostname = (parsed.hostname or "").lower()
+    except ValueError as exc:
+        raise email_service.EmailConfigurationError("APP_BASE_URL is invalid.") from exc
+    if (
+        parsed.scheme not in {"http", "https"}
+        or not parsed.netloc
+        or parsed.username
+        or parsed.password
+        or parsed.query
+        or parsed.fragment
+        or (parsed.scheme != "https" and hostname not in {"localhost", "127.0.0.1", "::1"})
+    ):
+        raise email_service.EmailConfigurationError(
+            "APP_BASE_URL must be a public HTTPS origin."
+        )
+    return base_url.rstrip("/") + url_for("reset_password", token=token)
+
+
 def _otp_digest(value):
     return hmac.new(app.secret_key.encode("utf-8"), value.encode("utf-8"), hashlib.sha256).hexdigest()
-
-
-def _password_reset_code_digest(value):
-    return hmac.new(
-        app.secret_key.encode("utf-8"),
-        f"password-reset:{value}".encode("utf-8"),
-        hashlib.sha256,
-    ).hexdigest()
 
 
 def _normalize_ph_mobile(value):
@@ -318,7 +337,7 @@ def restore_resolved_concern_slot(conn, complaint, now=None):
     return bool(restored)
 
 
-def issue_login_otp(user, mode="login", phone=None, now=None):
+def issue_login_otp(user, now=None):
     now = now or datetime.now()
     ttl_minutes = configured_minutes("ADMIN_OTP_TTL_MINUTES", 5)
     resend_seconds = configured_minutes("ADMIN_OTP_RESEND_SECONDS", 60)
@@ -347,34 +366,20 @@ def issue_login_otp(user, mode="login", phone=None, now=None):
         conn.close()
         return False, wait_seconds
 
-    email_code = f"{secrets.randbelow(1_000_000):06d}" if mode != "bootstrap_sms" else None
-    sms_required = mode == "bootstrap_sms" or (mode == "login" and login_sms_enabled())
-    sms_code = f"{secrets.randbelow(1_000_000):06d}" if sms_required else None
-    if sms_required and mode == "login" and not user["contact_number"]:
-        conn.rollback()
-        conn.close()
-        raise ValueError("A verified mobile number is required for login.")
-    if mode == "bootstrap_sms" and not phone:
-        conn.rollback()
-        conn.close()
-        raise ValueError("A mobile number is required for SMS verification.")
+    email_code = f"{secrets.randbelow(1_000_000):06d}"
     expires_at = now + timedelta(minutes=ttl_minutes)
     conn.execute(
         "INSERT INTO admin_otp_challenges "
-        "(user_id, otp_hash, email_otp_hash, sms_otp_hash, pending_phone, mode, email_verified_at, "
-        "expires_at, sent_at, attempts, window_started_at, sends_in_window, used_at) "
-        "VALUES (?,NULL,?,?,?,?,?,?,?,0,?,?,NULL) ON CONFLICT(user_id) DO UPDATE SET "
-        "otp_hash=NULL, email_otp_hash=excluded.email_otp_hash, sms_otp_hash=excluded.sms_otp_hash, "
-        "pending_phone=excluded.pending_phone, mode=excluded.mode, "
-        "email_verified_at=excluded.email_verified_at, expires_at=excluded.expires_at, "
+        "(user_id, email_otp_hash, mode, expires_at, sent_at, attempts, "
+        "window_started_at, sends_in_window, used_at) "
+        "VALUES (?,?,?,?,?,0,?,?,NULL) ON CONFLICT(user_id) DO UPDATE SET "
+        "email_otp_hash=excluded.email_otp_hash, mode=excluded.mode, "
+        "expires_at=excluded.expires_at, "
         "sent_at=excluded.sent_at, "
         "attempts=0, window_started_at=excluded.window_started_at, "
         "sends_in_window=excluded.sends_in_window, used_at=NULL",
         (
-            user["id"], _otp_digest(email_code) if email_code else None,
-            _otp_digest(sms_code) if sms_code else None,
-            phone if mode == "bootstrap_sms" else None, mode,
-            now.isoformat(timespec="seconds") if mode == "bootstrap_sms" else None,
+            user["id"], _otp_digest(email_code), "email_only",
             expires_at.isoformat(timespec="seconds"), now.isoformat(timespec="seconds"),
             window_started.isoformat(timespec="seconds"), sends + 1,
         ),
@@ -383,39 +388,28 @@ def issue_login_otp(user, mode="login", phone=None, now=None):
     conn.close()
 
     try:
-        if email_code:
-            message = (
-                f"Your BarangayConnect email verification code is {email_code}.\n\n"
-                f"It expires in {ttl_minutes} minutes. If you did not request this code, "
-                "you can ignore this email."
-            )
-            email_service.send_email(
-                user["email"], "BarangayConnect email verification code", message
-            )
-        if sms_code:
-            sms_service.send_sms(
-                phone or user["contact_number"],
-                f"BarangayConnect SMS verification code is {sms_code}. "
-                f"It expires in {ttl_minutes} minutes. Do not share this code.",
-            )
+        message = (
+            f"Your BarangayConnect email verification code is {email_code}.\n\n"
+            f"It expires in {ttl_minutes} minutes. If you did not request this code, "
+            "you can ignore this email."
+        )
+        email_service.send_email(
+            user["email"], "BarangayConnect email verification code", message
+        )
     except (
         email_service.EmailConfigurationError,
-        sms_service.SMSConfigurationError,
         email_service.smtplib.SMTPException,
-        requests.RequestException,
         OSError,
         ValueError,
         RuntimeError,
     ):
         conn = dbh.get_db()
         conn.execute(
-            "UPDATE admin_otp_challenges SET otp_hash=NULL, email_otp_hash=NULL, "
-            "sms_otp_hash=NULL, expires_at=?, used_at=? WHERE user_id=? "
-            "AND email_otp_hash IS ? AND sms_otp_hash IS ? AND mode=?",
+            "UPDATE admin_otp_challenges SET email_otp_hash=NULL, "
+            "expires_at=?, used_at=? WHERE user_id=? AND email_otp_hash=?",
             (
                 now.isoformat(timespec="seconds"), now.isoformat(timespec="seconds"),
-                user["id"], _otp_digest(email_code) if email_code else None,
-                _otp_digest(sms_code) if sms_code else None, mode,
+                user["id"], _otp_digest(email_code),
             ),
         )
         conn.commit()
@@ -427,23 +421,19 @@ def issue_login_otp(user, mode="login", phone=None, now=None):
 def otp_page_context(conn, user_id, now=None):
     now = now or datetime.now()
     row = conn.execute(
-        "SELECT c.expires_at, c.sent_at, c.mode, u.contact_number "
-        "FROM admin_otp_challenges c JOIN users u ON u.id=c.user_id WHERE c.user_id=?",
+        "SELECT expires_at, sent_at FROM admin_otp_challenges WHERE user_id=?",
         (user_id,),
     ).fetchone()
     if not row:
-        return {"otp_expires_in": 0, "otp_resend_wait": 0, "otp_phone": ""}
+        return {"otp_expires_in": 0, "otp_resend_wait": 0}
     expires_at = _timestamp(row["expires_at"])
     sent_at = _timestamp(row["sent_at"])
     resend_seconds = configured_minutes("ADMIN_OTP_RESEND_SECONDS", 60)
-    phone = row["contact_number"] or ""
     return {
         "otp_expires_in": max(0, int((expires_at - now).total_seconds())) if expires_at else 0,
         "otp_resend_wait": max(
             0, int((sent_at + timedelta(seconds=resend_seconds) - now).total_seconds())
         ) if sent_at else 0,
-        "otp_phone": f"••••{phone[-4:]}" if phone else "",
-        "otp_sms_required": row["mode"] in {"login", "bootstrap_sms"},
     }
 
 
@@ -952,7 +942,6 @@ def login():
         if user:
             return redirect(url_for(f"{user['role']}_dashboard"))
     session.pop("pending_mfa_user", None)
-    session.pop("pending_mfa_bootstrap", None)
     session.pop("pending_reset_user", None)
 
     if request.method == "POST":
@@ -984,38 +973,24 @@ def login():
 
         conn.close()
 
-        bootstrap = False
-        mode = "login" if login_sms_enabled() else "email_only"
-        if login_sms_enabled() and not user["contact_number"]:
-            if user["role"] == "admin" and user["is_super_admin"]:
-                bootstrap = True
-                mode = "bootstrap_email"
-            else:
-                flash(
-                    "This account has no mobile number on file. Please contact the barangay office to update it.",
-                    "error",
-                )
-                return render_template("login.html"), 403
         try:
-            sent, wait_seconds = issue_login_otp(user, mode=mode)
+            sent, wait_seconds = issue_login_otp(user)
         except (
             email_service.EmailConfigurationError,
-            sms_service.SMSConfigurationError,
             email_service.smtplib.SMTPException,
-            requests.RequestException,
             OSError,
             ValueError,
             RuntimeError,
         ):
-            app.logger.exception("Could not deliver login verification codes.")
+            app.logger.exception("Could not deliver login verification code.")
             flash(
-                "We could not deliver the verification codes. Check the email and SMS configuration and try again.",
+                "We could not deliver the verification code. Check the email configuration and try again.",
                 "error",
             )
             return render_template("login.html"), 503
         challenge_conn = dbh.get_db()
         challenge = challenge_conn.execute(
-            "SELECT expires_at, email_otp_hash, sms_otp_hash "
+            "SELECT expires_at, email_otp_hash "
             "FROM admin_otp_challenges WHERE user_id=?", (user["id"],)
         ).fetchone()
         challenge_conn.close()
@@ -1024,7 +999,6 @@ def login():
             or not _timestamp(challenge["expires_at"])
             or _timestamp(challenge["expires_at"]) <= datetime.now()
             or not challenge["email_otp_hash"]
-            or (mode == "login" and not challenge["sms_otp_hash"])
         ):
             flash(
                 f"Please wait {wait_seconds} seconds before requesting another verification code.",
@@ -1032,22 +1006,10 @@ def login():
             )
             return render_template("login.html"), 429
         session["pending_mfa_user"] = user["id"]
-        session["pending_mfa_bootstrap"] = bootstrap
         if sent:
-            if bootstrap:
-                message = "An email verification code was sent to set up the Founding Admin mobile number."
-            elif mode == "login":
-                message = "Email and SMS verification codes were sent."
-            else:
-                message = "An email verification code was sent."
-            flash(message, "success")
+            flash("An email verification code was sent.", "success")
         else:
-            flash(
-                "A valid email and SMS code were recently sent. Check your email and phone or wait before requesting new ones."
-                if mode == "login" else
-                "A valid email code was recently sent. Check your email or wait before requesting another.",
-                "info",
-            )
+            flash("A valid email code was recently sent. Check your email or wait before requesting another.", "info")
         return redirect(url_for("verify_otp"))
 
     return render_template("login.html")
@@ -1058,26 +1020,15 @@ def verify_otp():
     if "pending_mfa_user" not in session:
         return redirect(url_for("login"))
     user_id = session["pending_mfa_user"]
-    if session.get("pending_mfa_bootstrap") and request.method == "GET":
-        conn = dbh.get_db()
-        challenge = conn.execute(
-            "SELECT mode FROM admin_otp_challenges WHERE user_id=?", (user_id,)
-        ).fetchone()
-        conn.close()
-        if challenge and challenge["mode"] in {"bootstrap_email_verified", "bootstrap_sms"}:
-            return redirect(url_for("setup_admin_mobile"))
     if request.method == "POST":
         email_code = request.form.get("email_otp", "").strip()
-        sms_code = request.form.get("sms_otp", "").strip()
         conn = dbh.get_db()
         conn.execute("BEGIN IMMEDIATE")
         challenge = conn.execute(
             "SELECT * FROM admin_otp_challenges WHERE user_id=?", (user_id,)
         ).fetchone()
         now = datetime.now()
-        if not challenge or challenge["used_at"] or not (
-            challenge["email_otp_hash"] or challenge["sms_otp_hash"]
-        ):
+        if not challenge or challenge["used_at"] or not challenge["email_otp_hash"]:
             conn.rollback()
             conn.close()
             flash("No active verification code. Request a new code.", "error")
@@ -1098,89 +1049,37 @@ def verify_otp():
             and len(email_code) == 6 and email_code.isdigit()
             and hmac.compare_digest(_otp_digest(email_code), challenge["email_otp_hash"])
         )
-        sms_valid = bool(
-            challenge["mode"] != "login"
-            or (
-                challenge["sms_otp_hash"]
-                and len(sms_code) == 6 and sms_code.isdigit()
-                and hmac.compare_digest(_otp_digest(sms_code), challenge["sms_otp_hash"])
-            )
-        )
-        if not email_valid or not sms_valid:
+        if not email_valid:
             conn.execute(
                 "UPDATE admin_otp_challenges SET attempts=attempts+1 WHERE user_id=?",
                 (user_id,),
             )
             conn.commit()
             conn.close()
-            flash("Incorrect email or SMS verification code.", "error")
+            flash("Incorrect email verification code.", "error")
             return redirect(url_for("verify_otp"))
         verified_user = conn.execute(
-            "SELECT id, full_name, role, must_reset_pw, is_super_admin, contact_number "
+            "SELECT id, role, must_reset_pw "
             "FROM users WHERE id=? AND status='active'",
             (user_id,),
         ).fetchone()
         if not verified_user:
             conn.execute(
-                "UPDATE admin_otp_challenges SET otp_hash=NULL, email_otp_hash=NULL, "
-                "sms_otp_hash=NULL, used_at=? WHERE user_id=?",
+                "UPDATE admin_otp_challenges SET email_otp_hash=NULL, used_at=? WHERE user_id=?",
                 (now.isoformat(timespec="seconds"), user_id),
             )
             conn.commit()
             conn.close()
             session.pop("pending_mfa_user", None)
-            session.pop("pending_mfa_bootstrap", None)
             flash("This account is no longer active.", "error")
             return redirect(url_for("login"))
-        if challenge["mode"] == "bootstrap_email":
-            if (
-                not session.get("pending_mfa_bootstrap")
-                or not verified_user["is_super_admin"]
-                or verified_user["contact_number"]
-            ):
-                conn.rollback()
-                conn.close()
-                flash("Mobile setup is not available for this account.", "error")
-                return redirect(url_for("login"))
-            conn.execute(
-                "UPDATE admin_otp_challenges SET email_otp_hash=NULL, mode='bootstrap_email_verified', "
-                "email_verified_at=?, expires_at=?, sent_at=NULL, attempts=0 WHERE user_id=?",
-                (
-                    now.isoformat(timespec="seconds"),
-                    (now + timedelta(minutes=configured_minutes("ADMIN_OTP_TTL_MINUTES", 5))).isoformat(timespec="seconds"),
-                    user_id,
-                ),
-            )
-            conn.commit()
-            conn.close()
-            return redirect(url_for("setup_admin_mobile"))
-        if challenge["mode"] == "bootstrap_email_verified":
-            conn.rollback()
-            conn.close()
-            flash("Enter and verify the Founding Admin mobile number to continue.", "error")
-            return redirect(url_for("setup_admin_mobile"))
-        if challenge["mode"] == "bootstrap_sms":
-            if not verified_user["is_super_admin"] or verified_user["contact_number"]:
-                conn.rollback()
-                conn.close()
-                flash("Mobile setup is no longer available for this account.", "error")
-                return redirect(url_for("login"))
-            phone = challenge["pending_phone"]
-            if not phone:
-                conn.rollback()
-                conn.close()
-                flash("Request a new SMS code to continue.", "error")
-                return redirect(url_for("setup_admin_mobile"))
-            conn.execute("UPDATE users SET contact_number=? WHERE id=?", (phone, user_id))
         conn.execute(
-            "UPDATE admin_otp_challenges SET otp_hash=NULL, email_otp_hash=NULL, "
-            "sms_otp_hash=NULL, pending_phone=NULL, used_at=? WHERE user_id=?",
+            "UPDATE admin_otp_challenges SET email_otp_hash=NULL, used_at=? WHERE user_id=?",
             (now.isoformat(timespec="seconds"), user_id),
         )
         conn.commit()
         conn.close()
         session.pop("pending_mfa_user", None)
-        session.pop("pending_mfa_bootstrap", None)
         if verified_user["must_reset_pw"]:
             session["pending_reset_user"] = user_id
             return redirect(url_for("first_login_reset"))
@@ -1206,162 +1105,23 @@ def resend_admin_otp():
     if not user:
         session.pop("pending_mfa_user", None)
         return redirect(url_for("login"))
-    if session.get("pending_mfa_bootstrap"):
-        mode = "bootstrap_email"
-    else:
-        mode = "login" if login_sms_enabled() else "email_only"
     try:
-        sent, wait_seconds = issue_login_otp(user, mode=mode)
+        sent, wait_seconds = issue_login_otp(user)
     except (
         email_service.EmailConfigurationError,
-        sms_service.SMSConfigurationError,
         email_service.smtplib.SMTPException,
-        requests.RequestException,
         OSError,
         ValueError,
         RuntimeError,
     ):
-        app.logger.exception("Could not redeliver login verification codes.")
+        app.logger.exception("Could not redeliver login verification code.")
         flash("We could not deliver a new verification code. Check the email configuration and try again.", "error")
     else:
         if sent:
-            flash("New verification codes were sent. The previous codes are no longer valid.", "success")
+            flash("A new verification code was sent. The previous code is no longer valid.", "success")
         else:
             flash(f"Please wait {wait_seconds} seconds before requesting another code.", "error")
     return redirect(url_for("verify_otp"))
-
-
-@app.route("/setup-admin-mobile", methods=["GET", "POST"])
-def setup_admin_mobile():
-    user_id = session.get("pending_mfa_user")
-    if not user_id or not session.get("pending_mfa_bootstrap"):
-        return redirect(url_for("login"))
-    conn = dbh.get_db()
-    user = conn.execute(
-        "SELECT * FROM users WHERE id=? AND role='admin' AND is_super_admin=1 "
-        "AND status='active' AND contact_number IS NULL",
-        (user_id,),
-    ).fetchone()
-    challenge = conn.execute(
-        "SELECT * FROM admin_otp_challenges WHERE user_id=?", (user_id,)
-    ).fetchone()
-    if not user or not challenge or challenge["mode"] not in {
-        "bootstrap_email_verified", "bootstrap_sms"
-    } or not challenge["email_verified_at"]:
-        conn.close()
-        session.pop("pending_mfa_user", None)
-        session.pop("pending_mfa_bootstrap", None)
-        return redirect(url_for("login"))
-
-    if request.method == "POST":
-        action = request.form.get("action", "verify")
-        if action == "send":
-            phone = _normalize_ph_mobile(request.form.get("contact_number", "").strip())
-            if not phone:
-                conn.close()
-                flash("Enter a valid Philippine mobile number, such as 0917 123 4567.", "error")
-                return redirect(url_for("setup_admin_mobile"))
-            conn.close()
-            try:
-                sent, wait_seconds = issue_login_otp(user, mode="bootstrap_sms", phone=phone)
-            except (
-                sms_service.SMSConfigurationError,
-                requests.RequestException,
-                OSError,
-                ValueError,
-                RuntimeError,
-            ):
-                app.logger.exception("Could not deliver Founding Admin mobile setup code.")
-                flash("We could not deliver the SMS code. Check the SMS configuration and try again.", "error")
-                context_conn = dbh.get_db()
-                context = otp_page_context(context_conn, user_id)
-                context_conn.close()
-                return render_template("setup_admin_mobile.html", phone=phone, **context), 503
-            if not sent:
-                flash(f"Please wait {wait_seconds} seconds before requesting another code.", "error")
-            else:
-                flash("A verification code was sent to the mobile number.", "success")
-            context_conn = dbh.get_db()
-            context = otp_page_context(context_conn, user_id)
-            context_conn.close()
-            return render_template("setup_admin_mobile.html", phone=phone, **context)
-
-        code = request.form.get("sms_otp", "").strip()
-        now = datetime.now()
-        conn.execute("BEGIN IMMEDIATE")
-        challenge = conn.execute(
-            "SELECT * FROM admin_otp_challenges WHERE user_id=?", (user_id,)
-        ).fetchone()
-        if (
-            not challenge
-            or challenge["mode"] != "bootstrap_sms"
-            or not challenge["sms_otp_hash"]
-            or challenge["used_at"]
-            or not challenge["expires_at"]
-            or now >= _timestamp(challenge["expires_at"])
-        ):
-            conn.rollback()
-            conn.close()
-            flash("No active SMS code. Request a new code.", "error")
-            return redirect(url_for("setup_admin_mobile"))
-        if challenge["attempts"] >= 5:
-            conn.rollback()
-            conn.close()
-            flash("Too many incorrect attempts. Sign in again to restart setup.", "error")
-            return redirect(url_for("login"))
-        if len(code) != 6 or not code.isdigit() or not hmac.compare_digest(
-            _otp_digest(code), challenge["sms_otp_hash"]
-        ):
-            conn.execute(
-                "UPDATE admin_otp_challenges SET attempts=attempts+1 WHERE user_id=?",
-                (user_id,),
-            )
-            conn.commit()
-            conn.close()
-            flash("Incorrect SMS verification code.", "error")
-            return redirect(url_for("setup_admin_mobile"))
-        if not challenge["pending_phone"]:
-            conn.rollback()
-            conn.close()
-            flash("Request a new SMS code to continue.", "error")
-            return redirect(url_for("setup_admin_mobile"))
-        conn.execute(
-            "UPDATE users SET contact_number=? WHERE id=?",
-            (challenge["pending_phone"], user_id),
-        )
-        dbh.log_action(
-            conn,
-            {"id": user_id, "full_name": user["full_name"]},
-            "Verified Founding Admin mobile number",
-        )
-        conn.execute(
-            "UPDATE admin_otp_challenges SET sms_otp_hash=NULL, pending_phone=NULL, "
-            "used_at=? WHERE user_id=?",
-            (now.isoformat(timespec="seconds"), user_id),
-        )
-        conn.commit()
-        conn.close()
-        session.pop("pending_mfa_user", None)
-        session.pop("pending_mfa_bootstrap", None)
-        if user["must_reset_pw"]:
-            session["pending_reset_user"] = user_id
-            flash("Mobile number verified. Set a permanent password to continue.", "success")
-            return redirect(url_for("first_login_reset"))
-        session["user_id"] = user_id
-        session["role"] = "admin"
-        flash("Mobile number verified. Email and SMS verification are enabled for future logins.", "success")
-        return redirect(url_for("admin_dashboard"))
-
-    conn.close()
-    context_conn = dbh.get_db()
-    context = otp_page_context(context_conn, user_id)
-    context_conn.close()
-    return render_template(
-        "setup_admin_mobile.html",
-        phone=challenge["pending_phone"] or "",
-        otp_expires_in=context["otp_expires_in"],
-        otp_resend_wait=context["otp_resend_wait"],
-    )
 
 
 @app.route("/first-login-reset", methods=["GET", "POST"])
@@ -1425,8 +1185,7 @@ def forgot_password():
         conn = dbh.get_db()
         conn.execute("BEGIN IMMEDIATE")
         user = conn.execute(
-            "SELECT * FROM users WHERE email=? AND role IN ('resident','admin') "
-            "AND status='active'",
+            "SELECT * FROM users WHERE email=? AND status='active'",
             (email,),
         ).fetchone()
         if user:
@@ -1450,8 +1209,13 @@ def forgot_password():
             if sends >= max_sends or wait_seconds:
                 conn.rollback()
                 conn.close()
-                flash("If that email is registered, a reset code has been sent.", "info")
-                return redirect(url_for("reset_password_code", email=email))
+                flash(
+                    "If that address belongs to an active account and email delivery is available, "
+                    "a reset link will arrive shortly. "
+                    "If no email arrives, contact the barangay office.",
+                    "info",
+                )
+                return redirect(url_for("forgot_password"))
             conn.execute(
                 "INSERT INTO password_reset_limits (user_id,last_sent_at,window_started_at,sends_in_window) "
                 "VALUES (?,?,?,?) ON CONFLICT(user_id) DO UPDATE SET "
@@ -1462,147 +1226,93 @@ def forgot_password():
                     window_started.isoformat(timespec="seconds"), sends + 1,
                 ),
             )
-            code = f"{secrets.randbelow(1_000_000):06d}"
-            code_hash = _password_reset_code_digest(code)
+            token = secrets.token_urlsafe(32)
             now = datetime.now()
             expires_at = now + timedelta(minutes=configured_minutes("PASSWORD_RESET_TTL_MINUTES", 30))
             timestamp = now.isoformat(timespec="seconds")
             conn.execute(
-                "UPDATE password_reset_tokens SET used_at=? WHERE user_id=? AND used_at IS NULL",
-                (timestamp, user["id"]),
-            )
-            conn.execute(
-                "INSERT INTO password_reset_codes "
-                "(user_id,code_hash,expires_at,attempts,used_at,created_at) VALUES (?,?,?,0,NULL,?) "
-                "ON CONFLICT(user_id) DO UPDATE SET code_hash=excluded.code_hash, "
-                "expires_at=excluded.expires_at,attempts=0,used_at=NULL,created_at=excluded.created_at",
+                "INSERT INTO password_reset_tokens (user_id,token_hash,expires_at,created_at) "
+                "VALUES (?,?,?,?)",
                 (
-                    user["id"], code_hash, expires_at.isoformat(timespec="seconds"), timestamp,
+                    user["id"], _token_digest(token), expires_at.isoformat(timespec="seconds"), timestamp,
                 ),
             )
+            token_id = conn.execute("SELECT last_insert_rowid()").fetchone()[0]
             conn.commit()
         conn.close()
         if user:
             try:
+                reset_url = _password_reset_link(token)
                 email_service.send_email(
-                    user["recovery_email"] or user["email"],
-                    "Your BarangayConnect password reset code",
-                    "Enter this code on the BarangayConnect password reset page to choose a new password:\n\n"
-                    f"{code}\n\nThis code expires in "
+                    user["email"],
+                    "Reset your BarangayConnect password",
+                    "Use the secure link below to choose a new password:\n\n"
+                    f"{reset_url}\n\nThis link expires in "
                     f"{configured_minutes('PASSWORD_RESET_TTL_MINUTES', 30)} minutes and can only be used once.\n\n"
                     "If you did not request a reset, you can ignore this email.",
                 )
-            except (
-                email_service.EmailConfigurationError,
-                email_service.smtplib.SMTPException,
-                OSError,
-                ValueError,
-            ):
-                app.logger.exception("Could not deliver password reset email.")
+            except (email_service.EmailConfigurationError, email_service.smtplib.SMTPException, OSError, ValueError) as exc:
+                detail = str(exc) if isinstance(exc, email_service.EmailConfigurationError) else ""
+                smtp_code = getattr(exc, "smtp_code", None)
+                app.logger.error(
+                    "Password reset email delivery failed (type=%s, smtp_code=%s, detail=%s).",
+                    type(exc).__name__,
+                    smtp_code,
+                    detail,
+                )
                 conn = dbh.get_db()
                 conn.execute(
-                    "UPDATE password_reset_codes SET code_hash=NULL,used_at=? WHERE user_id=?",
-                    (datetime.now().isoformat(timespec="seconds"), user["id"]),
+                    "UPDATE password_reset_tokens SET used_at=? WHERE id=? AND used_at IS NULL",
+                    (datetime.now().isoformat(timespec="seconds"), token_id),
                 )
                 conn.commit()
                 conn.close()
-                flash("We could not deliver the reset email. Check the email configuration and try again.", "error")
-                return redirect(url_for("forgot_password"))
-            conn = dbh.get_db()
-            dbh.log_action(conn, user, "Password reset email sent")
-            conn.commit()
-            conn.close()
-            flash("If that email is registered, a reset code has been sent.", "success")
-        else:
-            flash("If that email is registered, a reset code has been sent.", "info")
-        return redirect(url_for("reset_password_code", email=email))
+            else:
+                conn = dbh.get_db()
+                timestamp = datetime.now().isoformat(timespec="seconds")
+                conn.execute(
+                    "UPDATE password_reset_tokens SET used_at=? "
+                    "WHERE user_id=? AND id<>? AND used_at IS NULL",
+                    (timestamp, user["id"], token_id),
+                )
+                conn.execute(
+                    "UPDATE password_reset_codes SET code_hash=NULL,used_at=? "
+                    "WHERE user_id=? AND used_at IS NULL",
+                    (timestamp, user["id"]),
+                )
+                dbh.log_action(conn, user, "Password reset email sent")
+                conn.commit()
+                conn.close()
+        flash(
+            "If that address belongs to an active account and email delivery is available, "
+            "a reset link will arrive shortly. "
+            "If no email arrives, contact the barangay office.",
+            "info",
+        )
+        return redirect(url_for("forgot_password"))
     return render_template("forgot_password.html")
 
 
 @app.route("/reset-password", methods=["GET", "POST"])
-def reset_password_code():
-    email = request.args.get("email", "").strip().lower()
-    if request.method == "POST":
-        email = request.form.get("email", "").strip().lower()
-        code = request.form.get("code", "").strip()
-        password = request.form.get("password", "")
-        confirm = request.form.get("confirm_password", "")
-        if not valid_email(email):
-            flash("Please enter a valid email address.", "error")
-            return render_template("reset_password_code.html", email=email), 400
-        if not valid_password(password):
-            flash("Password must be at least 8 characters and include a letter and a number.", "error")
-            return render_template("reset_password_code.html", email=email)
-        if password != confirm:
-            flash("Passwords do not match.", "error")
-            return render_template("reset_password_code.html", email=email)
-
-        conn = dbh.get_db()
-        conn.execute("BEGIN IMMEDIATE")
-        user = conn.execute(
-            "SELECT * FROM users WHERE email=? AND role IN ('resident','admin') "
-            "AND status='active'",
-            (email,),
-        ).fetchone()
-        reset = conn.execute(
-            "SELECT * FROM password_reset_codes WHERE user_id=?",
-            (user["id"],),
-        ).fetchone() if user else None
-        now = datetime.now()
-        max_attempts = 5
-        if (
-            not reset
-            or not reset["code_hash"]
-            or reset["used_at"]
-            or _timestamp(reset["expires_at"]) <= now
-            or reset["attempts"] >= max_attempts
-        ):
-            conn.rollback()
-            conn.close()
-            flash("That reset code is invalid or expired. Request a new code and try again.", "error")
-            return render_template("reset_password_code.html", email=email), 400
-        if not hmac.compare_digest(reset["code_hash"], _password_reset_code_digest(code)):
-            attempts = reset["attempts"] + 1
-            conn.execute(
-                "UPDATE password_reset_codes SET attempts=? WHERE user_id=?",
-                (attempts, user["id"]),
-            )
-            conn.commit()
-            conn.close()
-            if attempts >= max_attempts:
-                flash("Too many incorrect attempts. Request a new reset code.", "error")
-            else:
-                flash("That reset code is incorrect. Please check the code and try again.", "error")
-            return render_template("reset_password_code.html", email=email), 400
-
-        timestamp = now.isoformat(timespec="seconds")
-        conn.execute(
-            "UPDATE users SET password_hash=? WHERE id=?",
-            (generate_password_hash(password), user["id"]),
-        )
-        conn.execute(
-            "UPDATE password_reset_codes SET code_hash=NULL,used_at=? WHERE user_id=?",
-            (timestamp, user["id"]),
-        )
-        conn.execute(
-            "UPDATE password_reset_tokens SET used_at=? WHERE user_id=? AND used_at IS NULL",
-            (timestamp, user["id"]),
-        )
-        dbh.log_action(conn, user, "Password reset using emailed code")
-        conn.commit()
-        conn.close()
-        flash("Your password was changed. You can now log in.", "success")
-        return redirect(url_for("login"))
-    return render_template("reset_password_code.html", email=email)
+def legacy_reset_password():
+    flash("Password recovery now uses secure email links. Request a new link to continue.", "info")
+    return redirect(url_for("forgot_password"))
 
 
 @app.route("/reset-password/<token>", methods=["GET", "POST"])
 def reset_password(token):
     conn = dbh.get_db()
     row = conn.execute(
-        "SELECT * FROM password_reset_tokens WHERE token_hash=?", (_token_digest(token),)
+        "SELECT t.*,u.status AS user_status FROM password_reset_tokens t "
+        "JOIN users u ON u.id=t.user_id WHERE t.token_hash=?",
+        (_token_digest(token),),
     ).fetchone()
-    if not row or row["used_at"] or _timestamp(row["expires_at"]) <= datetime.now():
+    if (
+        not row
+        or row["user_status"] != "active"
+        or row["used_at"]
+        or _timestamp(row["expires_at"]) <= datetime.now()
+    ):
         conn.close()
         return render_template("reset_password.html", token_valid=False), 400
     if request.method == "POST":
@@ -1618,22 +1328,35 @@ def reset_password(token):
             return render_template("reset_password.html", token_valid=True, token=token)
         conn.execute("BEGIN IMMEDIATE")
         row = conn.execute(
-            "SELECT * FROM password_reset_tokens WHERE token_hash=?", (_token_digest(token),)
+            "SELECT t.*,u.status AS user_status FROM password_reset_tokens t "
+            "JOIN users u ON u.id=t.user_id WHERE t.token_hash=?",
+            (_token_digest(token),),
         ).fetchone()
-        if not row or row["used_at"] or _timestamp(row["expires_at"]) <= datetime.now():
+        if (
+            not row
+            or row["user_status"] != "active"
+            or row["used_at"]
+            or _timestamp(row["expires_at"]) <= datetime.now()
+        ):
             conn.rollback()
             conn.close()
             return render_template("reset_password.html", token_valid=False), 400
         conn.execute(
-            "UPDATE users SET password_hash=? WHERE id=?",
+            "UPDATE users SET password_hash=?,must_reset_pw=0 WHERE id=?",
             (generate_password_hash(password), row["user_id"]),
         )
+        timestamp = datetime.now().isoformat(timespec="seconds")
         conn.execute(
             "UPDATE password_reset_tokens SET used_at=? WHERE user_id=? AND used_at IS NULL",
-            (datetime.now().isoformat(timespec="seconds"), row["user_id"]),
+            (timestamp, row["user_id"]),
+        )
+        conn.execute(
+            "UPDATE password_reset_codes SET code_hash=NULL,used_at=? "
+            "WHERE user_id=? AND used_at IS NULL",
+            (timestamp, row["user_id"]),
         )
         user = conn.execute("SELECT * FROM users WHERE id=?", (row["user_id"],)).fetchone()
-        dbh.log_action(conn, user, "Password reset using emailed token")
+        dbh.log_action(conn, user, "Password reset using emailed link")
         conn.commit()
         conn.close()
         flash("Your password was changed. You can now log in.", "success")
@@ -2974,8 +2697,7 @@ def update_account_mobile(user, account_id):
         "UPDATE users SET contact_number=? WHERE id=?", (contact_number, account_id)
     )
     conn.execute(
-        "UPDATE admin_otp_challenges SET otp_hash=NULL, email_otp_hash=NULL, "
-        "sms_otp_hash=NULL, pending_phone=NULL, used_at=? WHERE user_id=?",
+        "UPDATE admin_otp_challenges SET email_otp_hash=NULL, used_at=? WHERE user_id=?",
         (datetime.now().isoformat(timespec="seconds"), account_id),
     )
     dbh.log_action(
@@ -3259,128 +2981,607 @@ def admin_announcements(user):
     return render_template("admin/announcements.html", rows=rows)
 
 
-def _report_range_bounds(range_key):
-    now = datetime.now()
-    if range_key == "daily":
-        start = now.strftime("%Y-%m-%d 00:00:00")
-    elif range_key == "weekly":
-        start = (now - timedelta(days=7)).strftime("%Y-%m-%d %H:%M:%S")
-    elif range_key == "yearly":
-        start = now.strftime("%Y-01-01 00:00:00")
-    else:  # monthly default
-        start = now.strftime("%Y-%m-01 00:00:00")
-    return start
+REPORT_RANGES = {
+    "today": "Today",
+    "week": "This Week",
+    "month": "This Month",
+    "last_month": "Last Month",
+    "year": "This Year",
+    "custom": "Custom Range",
+    "all": "All Time",
+}
 
 
-def _build_report(conn, range_key):
-    start = _report_range_bounds(range_key)
-    total_requests = conn.execute("SELECT COUNT(*) c FROM requests WHERE created_at>=?", (start,)).fetchone()["c"]
-    total_complaints = conn.execute("SELECT COUNT(*) c FROM complaints WHERE created_at>=?", (start,)).fetchone()["c"]
-    approved = conn.execute(
-        "SELECT COUNT(*) c FROM requests WHERE created_at>=? AND status='Approved'", (start,)
-    ).fetchone()["c"]
-    completed = conn.execute(
-        "SELECT COUNT(*) c FROM requests WHERE created_at>=? AND status='Completed'", (start,)
-    ).fetchone()["c"]
-    resolved = conn.execute(
-        "SELECT COUNT(*) c FROM complaints WHERE created_at>=? AND status IN ('Resolved','Closed')", (start,)
-    ).fetchone()["c"]
-    new_residents = conn.execute(
-        "SELECT COUNT(*) c FROM users WHERE role='resident' AND created_at>=?", (start,)
-    ).fetchone()["c"]
-    staff_activity = conn.execute(
-        """
-        SELECT u.full_name, COUNT(*) actions FROM audit_logs a
-        JOIN users u ON u.id = a.actor_id
-        WHERE u.role IN ('staff','admin') AND a.created_at>=?
-        GROUP BY u.full_name ORDER BY actions DESC
-        """,
-        (start,),
+def _month_start(value):
+    return value.replace(day=1)
+
+
+def _next_month(value):
+    return (value.replace(day=28) + timedelta(days=4)).replace(day=1)
+
+
+def _analytics_filters(args):
+    range_key = args.get("range", "year")
+    if range_key not in REPORT_RANGES:
+        range_key = "year"
+    filters = {
+        "range": range_key,
+        "start_date": args.get("start_date", "").strip(),
+        "end_date": args.get("end_date", "").strip(),
+        "category": args.get("category", "").strip(),
+        "document_type": args.get("document_type", "").strip(),
+        "status": args.get("status", "").strip(),
+    }
+    if filters["category"] not in COMPLAINT_CATEGORIES:
+        filters["category"] = ""
+    if filters["document_type"] not in REQUEST_TYPES:
+        filters["document_type"] = ""
+    if filters["status"] not in set(COMPLAINT_STATUSES + REQUEST_STATUSES):
+        filters["status"] = ""
+    return filters
+
+
+def _analytics_bounds(filters, today=None):
+    today = today or datetime.now().date()
+    range_key = filters["range"]
+    if range_key == "today":
+        start = today
+        end = today + timedelta(days=1)
+    elif range_key == "week":
+        start = today - timedelta(days=today.weekday())
+        end = start + timedelta(days=7)
+    elif range_key == "month":
+        start = _month_start(today)
+        end = _next_month(start)
+    elif range_key == "last_month":
+        end = _month_start(today)
+        start = (end - timedelta(days=1)).replace(day=1)
+    elif range_key == "year":
+        start = today.replace(month=1, day=1)
+        end = today.replace(year=today.year + 1, month=1, day=1)
+    elif range_key == "custom":
+        try:
+            start = datetime.strptime(filters["start_date"], "%Y-%m-%d").date()
+            last_day = datetime.strptime(filters["end_date"], "%Y-%m-%d").date()
+        except ValueError:
+            raise ValueError("Choose valid start and end dates for the custom range.")
+        if last_day < start:
+            raise ValueError("The end date must be on or after the start date.")
+        end = last_day + timedelta(days=1)
+    else:
+        return None, None
+    return start, end
+
+
+def _report_where(user, table, filters, bounds):
+    clauses = []
+    params = []
+    start, end = bounds
+    if start:
+        clauses.append("created_at>=?")
+        params.append(start.strftime("%Y-%m-%d 00:00:00"))
+    if end:
+        clauses.append("created_at<?")
+        params.append(end.strftime("%Y-%m-%d 00:00:00"))
+    if filters["status"]:
+        clauses.append("status=?")
+        params.append(filters["status"])
+
+    if table == "complaints":
+        if filters["category"]:
+            clauses.append("category=?")
+            params.append(filters["category"])
+        if user["role"] == "staff" and not can_handle_complaints(user):
+            clauses.append("0")
+    else:
+        if filters["document_type"]:
+            clauses.append("request_type=?")
+            params.append(filters["document_type"])
+        if user["role"] == "staff":
+            allowed_types = handled_request_types(user)
+            if not allowed_types:
+                clauses.append("0")
+            else:
+                clauses.append("request_type IN (" + ",".join("?" for _ in allowed_types) + ")")
+                params.extend(allowed_types)
+    return " WHERE " + (" AND ".join(clauses) if clauses else "1=1"), params
+
+
+def _report_count(conn, user, table, filters, bounds, extra=""):
+    where, params = _report_where(user, table, filters, bounds)
+    row = conn.execute(
+        f"SELECT COUNT(*) AS count FROM {table}{where}{extra}", params
+    ).fetchone()
+    return row["count"]
+
+
+def _report_groups(conn, user, table, field, filters, bounds, previous_bounds=None):
+    where, params = _report_where(user, table, filters, bounds)
+    rows = conn.execute(
+        f"SELECT {field} AS label, COUNT(*) AS count FROM {table}{where} "
+        f"GROUP BY {field} ORDER BY count DESC, label ASC LIMIT 10",
+        params,
     ).fetchall()
-    approval_rate = round((approved + completed) / total_requests * 100, 1) if total_requests else 0.0
-    resolution_rate = round(resolved / total_complaints * 100, 1) if total_complaints else 0.0
-    return dict(
-        range=range_key, start=start, total_requests=total_requests, total_complaints=total_complaints,
-        approval_rate=approval_rate, resolution_rate=resolution_rate, new_residents=new_residents,
-        staff_activity=staff_activity,
+    values = [dict(label=row["label"] or "Unspecified", count=row["count"]) for row in rows]
+    denominator = _report_count(conn, user, table, filters, bounds)
+
+    previous = {}
+    if previous_bounds:
+        prev_where, prev_params = _report_where(user, table, filters, previous_bounds)
+        previous_rows = conn.execute(
+            f"SELECT {field} AS label, COUNT(*) AS count FROM {table}{prev_where} "
+            f"GROUP BY {field}",
+            prev_params,
+        ).fetchall()
+        previous = {row["label"] or "Unspecified": row["count"] for row in previous_rows}
+    for row in values:
+        row["percentage"] = round(row["count"] / denominator * 100, 1) if denominator else 0
+        row["previous"] = previous.get(row["label"], 0)
+    scale = max((max(row["count"], row["previous"]) for row in values), default=0)
+    for row in values:
+        row["current_width"] = round(row["count"] / scale * 100) if scale else 0
+        row["previous_width"] = round(row["previous"] / scale * 100) if scale else 0
+    return values
+
+
+def _report_statuses(conn, user, table, filters, bounds):
+    where, params = _report_where(user, table, filters, bounds)
+    rows = conn.execute(
+        f"SELECT status, COUNT(*) AS count FROM {table}{where} GROUP BY status",
+        params,
+    ).fetchall()
+    counts = {row["status"]: row["count"] for row in rows}
+    statuses = COMPLAINT_STATUSES if table == "complaints" else REQUEST_STATUSES
+    total = sum(counts.values())
+    return [
+        {
+            "label": status,
+            "count": counts.get(status, 0),
+            "percentage": round(counts.get(status, 0) / total * 100, 1) if total else 0,
+        }
+        for status in statuses
+    ]
+
+
+def _report_monthly(conn, user, table, filters, bounds):
+    where, params = _report_where(user, table, filters, bounds)
+    rows = conn.execute(
+        f"SELECT strftime('%Y-%m', created_at) AS month, COUNT(*) AS count "
+        f"FROM {table}{where} GROUP BY month ORDER BY month DESC LIMIT 12",
+        params,
+    ).fetchall()
+    return [
+        {"month": row["month"], "label": datetime.strptime(row["month"], "%Y-%m").strftime("%b %Y"),
+         "count": row["count"]}
+        for row in reversed(rows) if row["month"]
+    ]
+
+
+def _analytics_month_keys(bounds, monthly_rows):
+    start, end = bounds
+    if start and end:
+        cursor = start.replace(day=1)
+        last = (end - timedelta(days=1)).replace(day=1)
+        keys = []
+        while cursor <= last:
+            keys.append(cursor.strftime("%Y-%m"))
+            cursor = _next_month(cursor)
+        return keys[-12:]
+    existing = [row["month"] for row in monthly_rows if row["month"]]
+    if not existing:
+        return []
+    last = datetime.strptime(max(existing), "%Y-%m").date().replace(day=1)
+    first = datetime.strptime(min(existing), "%Y-%m").date().replace(day=1)
+    cursor = max(first, (last.replace(day=1) - timedelta(days=335)).replace(day=1))
+    keys = []
+    while cursor <= last:
+        keys.append(cursor.strftime("%Y-%m"))
+        cursor = _next_month(cursor)
+    return keys[-12:]
+
+
+def _analytics_line_points(series, maximum):
+    if not series:
+        return ""
+    denominator = max(1, len(series) - 1)
+    maximum = max(1, maximum)
+    return " ".join(
+        f"{40 + index * 520 / denominator:.1f},"
+        f"{145 - row['count'] / maximum * 115:.1f}"
+        for index, row in enumerate(series)
     )
 
 
+def _report_month_count(conn, user, filters, bounds):
+    month_values = []
+    for table in ("complaints", "requests"):
+        where, params = _report_where(user, table, filters, bounds)
+        row = conn.execute(
+            f"SELECT MIN(created_at) AS first, MAX(created_at) AS last FROM {table}{where}",
+            params,
+        ).fetchone()
+        if row["first"] and row["last"]:
+            month_values.append((
+                datetime.fromisoformat(row["first"][:10]),
+                datetime.fromisoformat(row["last"][:10]),
+            ))
+    if not month_values:
+        return 1
+    first = min(value[0] for value in month_values)
+    last = max(value[1] for value in month_values)
+    return max(1, (last.year - first.year) * 12 + last.month - first.month + 1)
+
+
+def _analytics_comparison(conn, user, filters, bounds):
+    start, end = bounds
+    if not start or not end:
+        return None
+    duration = end - start
+    previous_bounds = (start - duration, start)
+    current_complaints = _report_count(conn, user, "complaints", filters, bounds)
+    previous_complaints = _report_count(conn, user, "complaints", filters, previous_bounds)
+    current_requests = _report_count(conn, user, "requests", filters, bounds)
+    previous_requests = _report_count(conn, user, "requests", filters, previous_bounds)
+
+    def change(current, previous):
+        if previous == 0:
+            return None
+        return round((current - previous) / previous * 100, 1)
+
+    return {
+        "previous_start": previous_bounds[0],
+        "previous_end": previous_bounds[1] - timedelta(days=1),
+        "complaints": current_complaints,
+        "previous_complaints": previous_complaints,
+        "complaint_change": change(current_complaints, previous_complaints),
+        "requests": current_requests,
+        "previous_requests": previous_requests,
+        "request_change": change(current_requests, previous_requests),
+    }
+
+
+def _build_report(conn, user, filters):
+    bounds = _analytics_bounds(filters)
+    previous_bounds = None
+    comparison = _analytics_comparison(conn, user, filters, bounds)
+    if comparison:
+        previous_bounds = (
+            comparison["previous_start"],
+            comparison["previous_end"] + timedelta(days=1),
+        )
+
+    total_requests = _report_count(conn, user, "requests", filters, bounds)
+    total_complaints = _report_count(conn, user, "complaints", filters, bounds)
+    approved_requests = _report_count(
+        conn, user, "requests", filters, bounds, " AND status='Approved'"
+    )
+    pending_requests = _report_count(
+        conn, user, "requests", filters, bounds,
+        " AND status IN ('Submitted','Under Review','Processing')",
+    )
+    verified_complaints = _report_count(
+        conn, user, "complaints", filters, bounds, " AND is_verified=1"
+    )
+    pending_complaints = _report_count(
+        conn, user, "complaints", filters, bounds, " AND status='Pending'"
+    )
+    resolved_complaints = _report_count(
+        conn, user, "complaints", filters, bounds, " AND status IN ('Resolved','Closed')"
+    )
+    rejected = _report_count(
+        conn, user, "requests", filters, bounds, " AND status='Rejected'"
+    ) + _report_count(
+        conn, user, "complaints", filters, bounds, " AND status='Rejected'"
+    )
+
+    complaint_categories = _report_groups(
+        conn, user, "complaints", "category", filters, bounds, previous_bounds
+    )
+    document_types = _report_groups(
+        conn, user, "requests", "request_type", filters, bounds, previous_bounds
+    )
+    complaint_statuses = _report_statuses(conn, user, "complaints", filters, bounds)
+    request_statuses = _report_statuses(conn, user, "requests", filters, bounds)
+    raw_complaint_months = _report_monthly(conn, user, "complaints", filters, bounds)
+    raw_request_months = _report_monthly(conn, user, "requests", filters, bounds)
+    month_keys = _analytics_month_keys(
+        bounds, raw_complaint_months + raw_request_months
+    )
+    complaint_month_lookup = {row["month"]: row["count"] for row in raw_complaint_months}
+    request_month_lookup = {row["month"]: row["count"] for row in raw_request_months}
+    complaint_months = [
+        {"month": key, "label": datetime.strptime(key, "%Y-%m").strftime("%b %y"),
+         "count": complaint_month_lookup.get(key, 0)}
+        for key in month_keys
+    ]
+    request_months = [
+        {"month": key, "label": datetime.strptime(key, "%Y-%m").strftime("%b %y"),
+         "count": request_month_lookup.get(key, 0)}
+        for key in month_keys
+    ]
+    monthly_max = max(
+        max((row["count"] for row in complaint_months), default=0),
+        max((row["count"] for row in request_months), default=0),
+    )
+
+    start, end = bounds
+    month_count = _report_month_count(conn, user, filters, bounds)
+    category_leader = complaint_categories[0] if complaint_categories else None
+    document_leader = document_types[0] if document_types else None
+    peak_complaint_month = max(complaint_months, key=lambda row: row["count"], default=None)
+    peak_request_month = max(request_months, key=lambda row: row["count"], default=None)
+    filter_description = [
+        ("Complaint category", filters["category"] or "All"),
+        ("Document type", filters["document_type"] or "All"),
+        ("Status", filters["status"] or "All"),
+    ]
+
+    return {
+        "filters": filters,
+        "range_label": REPORT_RANGES[filters["range"]],
+        "start_date": start,
+        "end_date": end - timedelta(days=1) if end else None,
+        "generated_at": datetime.now().strftime("%Y-%m-%d %H:%M"),
+        "filter_description": filter_description,
+        "total_requests": total_requests,
+        "total_complaints": total_complaints,
+        "total_transactions": total_requests + total_complaints,
+        "approved_requests": approved_requests,
+        "pending_requests": pending_requests,
+        "verified_complaints": verified_complaints,
+        "pending_complaints": pending_complaints,
+        "resolved_complaints": resolved_complaints,
+        "rejected": rejected,
+        "average_complaints": round(total_complaints / month_count, 1),
+        "average_requests": round(total_requests / month_count, 1),
+        "complaint_categories": complaint_categories,
+        "document_types": document_types,
+        "complaint_statuses": complaint_statuses,
+        "request_statuses": request_statuses,
+        "complaint_months": complaint_months,
+        "request_months": request_months,
+        "complaint_month_max": max((row["count"] for row in complaint_months), default=0),
+        "request_month_max": max((row["count"] for row in request_months), default=0),
+        "monthly_max": monthly_max,
+        "complaint_line_points": _analytics_line_points(complaint_months, monthly_max),
+        "request_line_points": _analytics_line_points(request_months, monthly_max),
+        "comparison": comparison,
+        "category_leader": category_leader,
+        "document_leader": document_leader,
+        "increasing_complaints": [
+            row for row in complaint_categories if row["count"] > row["previous"]
+        ],
+        "increasing_documents": [
+            row for row in document_types if row["count"] > row["previous"]
+        ],
+        "peak_complaint_month": peak_complaint_month,
+        "peak_request_month": peak_request_month,
+        "has_data": bool(total_requests or total_complaints),
+        "complaint_doughnut": _status_doughnut(
+            complaint_statuses, COMPLAINT_STATUS_COLORS
+        ),
+        "request_doughnut": _status_doughnut(
+            request_statuses, REQUEST_STATUS_COLORS
+        ),
+    }
+
+
+def _status_doughnut(rows, colors):
+    total = sum(row["count"] for row in rows)
+    if not total:
+        return "conic-gradient(#E7ECF3 0 100%)"
+    stops = []
+    accumulated = 0.0
+    for row in rows:
+        count = row["count"]
+        if not count:
+            continue
+        end = accumulated + count / total * 100
+        stops.append(
+            f"{colors[row['label']]} {accumulated:.2f}% {end:.2f}%"
+        )
+        accumulated = end
+    return "conic-gradient(" + ", ".join(stops) + ")"
+
+
 @app.route("/admin/reports")
-@login_required("admin")
+@app.route("/reports")
+@login_required("staff", "admin")
 def admin_reports(user):
-    range_key = request.args.get("range", "monthly")
+    if user["role"] == "staff" and not (
+        handled_request_types(user) or can_handle_complaints(user)
+    ):
+        abort(403)
+    filters = _analytics_filters(request.args)
+    filter_error = None
     conn = dbh.get_db()
-    report = _build_report(conn, range_key)
-    conn.close()
-    return render_template("admin/reports.html", report=report)
+    try:
+        report = _build_report(conn, user, filters)
+    except ValueError as exc:
+        filter_error = str(exc)
+        filters.update(range="year", start_date="", end_date="")
+        report = _build_report(conn, user, filters)
+    finally:
+        conn.close()
+    export_urls = {
+        fmt: url_for("export_report", **filters, format=fmt)
+        for fmt in ("csv", "pdf", "xlsx")
+    }
+    return render_template(
+        "admin/reports.html", report=report, filter_error=filter_error,
+        export_urls=export_urls,
+        complaint_categories=COMPLAINT_CATEGORIES,
+        request_types=handled_request_types(user) if user["role"] == "staff" else REQUEST_TYPES,
+        complaint_statuses=COMPLAINT_STATUSES,
+        request_statuses=REQUEST_STATUSES,
+        complaint_access=can_handle_complaints(user),
+        complaint_status_colors=COMPLAINT_STATUS_COLORS,
+        request_status_colors=REQUEST_STATUS_COLORS,
+    )
 
 
 @app.route("/admin/reports/export")
-@login_required("admin")
+@app.route("/reports/export")
+@login_required("staff", "admin")
 def export_report(user):
-    range_key = request.args.get("range", "monthly")
-    fmt = request.args.get("format", "xlsx")
+    if user["role"] == "staff" and not (
+        handled_request_types(user) or can_handle_complaints(user)
+    ):
+        abort(403)
+    filters = _analytics_filters(request.args)
+    fmt = request.args.get("format", "csv")
+    if fmt not in {"csv", "pdf", "xlsx"}:
+        abort(400)
     conn = dbh.get_db()
-    report = _build_report(conn, range_key)
+    try:
+        report = _build_report(conn, user, filters)
+    except ValueError as exc:
+        conn.close()
+        abort(400, description=str(exc))
     conn.close()
 
+    sections = [
+        ("Complaint Categories", report["complaint_categories"]),
+        ("Document Types", report["document_types"]),
+        ("Complaint Statuses", report["complaint_statuses"]),
+        ("Request Statuses", report["request_statuses"]),
+        ("Monthly Complaints", report["complaint_months"]),
+        ("Monthly Requests", report["request_months"]),
+    ]
+    summary = [
+        ("Total Complaints", report["total_complaints"]),
+        ("Total Document Requests", report["total_requests"]),
+        ("Total Transactions", report["total_transactions"]),
+        ("Verified Complaints", report["verified_complaints"]),
+        ("Pending Complaints", report["pending_complaints"]),
+        ("Resolved Complaints", report["resolved_complaints"]),
+        ("Approved Requests", report["approved_requests"]),
+        ("Pending Requests", report["pending_requests"]),
+        ("Rejected Requests and Complaints", report["rejected"]),
+        ("Average Complaints per Month", report["average_complaints"]),
+        ("Average Requests per Month", report["average_requests"]),
+    ]
+    filename_base = f"barangayconnect_analytics_{filters['range']}"
+
+    if fmt == "csv":
+        buf = io.StringIO()
+        writer = csv.writer(buf)
+        writer.writerow(["BarangayConnect Analytics Report"])
+        writer.writerow(["Period", report["range_label"]])
+        writer.writerow(["Generated", report["generated_at"]])
+        writer.writerow(["Start Date", report["start_date"] or "All time"])
+        writer.writerow(["End Date", report["end_date"] or ""])
+        writer.writerow(["Complaint Category", filters["category"] or "All"])
+        writer.writerow(["Document Type", filters["document_type"] or "All"])
+        writer.writerow(["Status", filters["status"] or "All"])
+        writer.writerow([])
+        writer.writerow(["Summary Metric", "Value"])
+        writer.writerows(summary)
+        for section_name, rows in sections:
+            writer.writerow([])
+            writer.writerow([section_name])
+            writer.writerow(["Name", "Count", "Percentage", "Previous Period Count"])
+            for row in rows:
+                writer.writerow([
+                    row.get("label", row.get("month", "")), row["count"],
+                    row.get("percentage", ""), row.get("previous", ""),
+                ])
+        return send_file(
+            io.BytesIO(buf.getvalue().encode("utf-8-sig")), mimetype="text/csv",
+            as_attachment=True, download_name=f"{filename_base}.csv",
+        )
+
     if fmt == "pdf":
+        from reportlab.lib import colors
         from reportlab.lib.pagesizes import letter
-        from reportlab.pdfgen import canvas
+        from reportlab.lib.styles import getSampleStyleSheet
+        from reportlab.lib.units import inch
+        from reportlab.platypus import (
+            Paragraph, SimpleDocTemplate, Spacer, Table, TableStyle,
+        )
         buf = io.BytesIO()
-        c = canvas.Canvas(buf, pagesize=letter)
-        width, height = letter
-        y = height - 72
-        c.setFont("Helvetica-Bold", 16)
-        c.drawString(72, y, f"BarangayConnect — {range_key.title()} Report")
-        y -= 30
-        c.setFont("Helvetica", 11)
-        for label, val in [
-            ("Total Requests", report["total_requests"]),
-            ("Total Complaints", report["total_complaints"]),
-            ("Request Approval/Completion Rate", f"{report['approval_rate']}%"),
-            ("Complaint Resolution Rate", f"{report['resolution_rate']}%"),
-            ("New Residents", report["new_residents"]),
-        ]:
-            c.drawString(72, y, f"{label}: {val}")
-            y -= 20
-        y -= 10
-        c.setFont("Helvetica-Bold", 12)
-        c.drawString(72, y, "Staff Activity")
-        y -= 20
-        c.setFont("Helvetica", 11)
-        for row in report["staff_activity"]:
-            c.drawString(72, y, f"{row['full_name']}: {row['actions']} actions")
-            y -= 18
-        c.save()
+        doc = SimpleDocTemplate(buf, pagesize=letter, rightMargin=0.55 * inch,
+                                leftMargin=0.55 * inch, topMargin=0.55 * inch,
+                                bottomMargin=0.55 * inch)
+        styles = getSampleStyleSheet()
+        story = [
+            Paragraph("BarangayConnect Analytics Report", styles["Title"]),
+            Paragraph(
+                f"{report['range_label']} · "
+                f"{report['start_date'] or 'All time'} to {report['end_date'] or 'Present'}",
+                styles["Normal"],
+            ),
+            Paragraph(f"Generated: {report['generated_at']}", styles["Normal"]),
+            Paragraph(
+                "Filters: " + " · ".join(f"{label}: {value}" for label, value in report["filter_description"]),
+                styles["Normal"],
+            ),
+            Spacer(1, 12),
+        ]
+        summary_table = Table([["Summary Metric", "Value"]] + [
+            [label, str(value)] for label, value in summary
+        ], repeatRows=1, hAlign="LEFT")
+        summary_table.setStyle(TableStyle([
+            ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#17345D")),
+            ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+            ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#D7DFEA")),
+            ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F3F6FA")]),
+            ("PADDING", (0, 0), (-1, -1), 6),
+        ]))
+        story.extend([summary_table, Spacer(1, 14)])
+        for section_name, rows in sections:
+            story.append(Paragraph(section_name, styles["Heading2"]))
+            data = [["Name", "Count", "Percentage", "Previous Period"]]
+            data.extend([
+                [
+                    str(row.get("label", row.get("month", ""))),
+                    str(row["count"]), f"{row.get('percentage', '')}%",
+                    str(row.get("previous", "")),
+                ]
+                for row in rows
+            ])
+            table = Table(data, repeatRows=1, hAlign="LEFT")
+            table.setStyle(TableStyle([
+                ("BACKGROUND", (0, 0), (-1, 0), colors.HexColor("#2451B0")),
+                ("TEXTCOLOR", (0, 0), (-1, 0), colors.white),
+                ("GRID", (0, 0), (-1, -1), 0.35, colors.HexColor("#D7DFEA")),
+                ("ROWBACKGROUNDS", (0, 1), (-1, -1), [colors.white, colors.HexColor("#F3F6FA")]),
+                ("PADDING", (0, 0), (-1, -1), 5),
+            ]))
+            story.extend([table, Spacer(1, 10)])
+        doc.build(story)
         buf.seek(0)
         return send_file(buf, mimetype="application/pdf", as_attachment=True,
-                          download_name=f"barangayconnect_report_{range_key}.pdf")
+                         download_name=f"{filename_base}.pdf")
 
-    # xlsx export
     from openpyxl import Workbook
     wb = Workbook()
-    ws = wb.active
-    ws.title = "Summary"
-    ws.append(["BarangayConnect Report", range_key.title()])
-    ws.append([])
-    ws.append(["Metric", "Value"])
-    ws.append(["Total Requests", report["total_requests"]])
-    ws.append(["Total Complaints", report["total_complaints"]])
-    ws.append(["Request Approval/Completion Rate (%)", report["approval_rate"]])
-    ws.append(["Complaint Resolution Rate (%)", report["resolution_rate"]])
-    ws.append(["New Residents", report["new_residents"]])
-    ws2 = wb.create_sheet("Staff Activity")
-    ws2.append(["Staff Name", "Actions Logged"])
-    for row in report["staff_activity"]:
-        ws2.append([row["full_name"], row["actions"]])
+    summary_ws = wb.active
+    summary_ws.title = "Summary"
+    summary_ws.append(["BarangayConnect Analytics Report", report["range_label"]])
+    summary_ws.append(["Generated", report["generated_at"]])
+    summary_ws.append(["Start Date", str(report["start_date"] or "All time")])
+    summary_ws.append(["End Date", str(report["end_date"] or "")])
+    for label, value in report["filter_description"]:
+        summary_ws.append([label, value])
+    summary_ws.append([])
+    summary_ws.append(["Metric", "Value"])
+    for label, value in summary:
+        summary_ws.append([label, value])
+    for section_name, rows in sections:
+        ws = wb.create_sheet(section_name[:31])
+        ws.append(["Name", "Count", "Percentage", "Previous Period Count"])
+        for row in rows:
+            ws.append([
+                row.get("label", row.get("month", "")), row["count"],
+                row.get("percentage", ""), row.get("previous", ""),
+            ])
     buf = io.BytesIO()
     wb.save(buf)
     buf.seek(0)
     return send_file(
         buf, mimetype="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-        as_attachment=True, download_name=f"barangayconnect_report_{range_key}.xlsx",
+        as_attachment=True, download_name=f"{filename_base}.xlsx",
     )
 
 
